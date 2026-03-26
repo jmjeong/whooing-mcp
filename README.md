@@ -1,6 +1,6 @@
 # whooing-mcp
 
-MCP server for [Whooing (후잉)](https://whooing.com) personal finance — read-only queries for spending, transactions, budgets, and balance sheets.
+MCP server for [Whooing (후잉)](https://whooing.com) personal finance — read-only queries for spending, transactions, balance sheets, and accounts.
 
 ## Setup
 
@@ -13,7 +13,10 @@ MCP server for [Whooing (후잉)](https://whooing.com) personal finance — read
 ### 2. Install
 
 ```bash
-npm install -g whooing-mcp
+git clone https://github.com/jmjeong/whooing-mcp.git
+cd whooing-mcp
+npm install
+npm run build
 ```
 
 ### 3. Configure Environment
@@ -32,13 +35,13 @@ Or create a `.env` file (see `.env.example`).
 ### stdio mode (Claude Code, Claude Desktop)
 
 ```bash
-whooing-mcp
+node dist/cli.js
 ```
 
 ### HTTP mode (daemon)
 
 ```bash
-whooing-mcp --http --port 8182
+node dist/cli.js --http --port 8182
 ```
 
 ### Claude Code config (`~/.mcp.json`)
@@ -47,7 +50,8 @@ whooing-mcp --http --port 8182
 {
   "mcpServers": {
     "whooing": {
-      "command": "whooing-mcp",
+      "command": "node",
+      "args": ["/path/to/whooing-mcp/dist/cli.js"],
       "env": {
         "WHOOING_APP_ID": "3",
         "WHOOING_TOKEN": "...",
@@ -65,8 +69,8 @@ whooing-mcp --http --port 8182
 {
   "mcpServers": {
     "whooing": {
-      "command": "npx",
-      "args": ["whooing-mcp"],
+      "command": "node",
+      "args": ["/path/to/whooing-mcp/dist/cli.js"],
       "env": {
         "WHOOING_APP_ID": "3",
         "WHOOING_TOKEN": "...",
@@ -105,7 +109,7 @@ Create `~/Library/LaunchAgents/com.whooing.mcp.plist`:
     <key>ProgramArguments</key>
     <array>
         <string>/opt/homebrew/bin/node</string>
-        <string>/opt/homebrew/lib/whooing-mcp/dist/cli.js</string>
+        <string>/path/to/whooing-mcp/dist/cli.js</string>
         <string>--http</string>
         <string>--port</string>
         <string>8182</string>

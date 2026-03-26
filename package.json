@@ -3,19 +3,9 @@
   "version": "0.1.0",
   "description": "MCP server for Whooing (후잉) personal finance — read-only queries for spending, transactions, budgets, and balance sheets",
   "type": "module",
-  "bin": {
-    "whooing-mcp": "./dist/cli.js"
-  },
   "main": "./dist/server.js",
-  "files": [
-    "dist",
-    "README.md",
-    "LICENSE",
-    ".env.example"
-  ],
   "scripts": {
-    "build": "tsc",
-    "prepublishOnly": "npm run build"
+    "build": "tsc"
   },
   "keywords": [
     "mcp",
