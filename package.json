@@ -35,5 +35,14 @@
   "bugs": {
     "url": "https://github.com/jmjeong/whooing-mcp/issues"
   },
-  "homepage": "https://github.com/jmjeong/whooing-mcp#readme"
+  "homepage": "https://github.com/jmjeong/whooing-mcp#readme",
+  "bin": {
+    "whooing-mcp": "dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE",
+    ".env.example"
+  ]
 }
