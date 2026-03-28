@@ -1,5 +1,7 @@
 # whooing-mcp
 
+[![npm version](https://img.shields.io/npm/v/whooing-mcp.svg)](https://www.npmjs.com/package/whooing-mcp)
+
 MCP server for [Whooing (후잉)](https://whooing.com) personal finance — read-only queries for spending, transactions, balance sheets, and accounts.
 
 ## Setup
@@ -10,16 +12,7 @@ MCP server for [Whooing (후잉)](https://whooing.com) personal finance — read
 2. Note your `app_id`, `token`, and `signature`
 3. Find your `section_id` from the API or URL
 
-### 2. Install
-
-```bash
-git clone https://github.com/jmjeong/whooing-mcp.git
-cd whooing-mcp
-npm install
-npm run build
-```
-
-### 3. Configure Environment
+### 2. Configure Environment
 
 ```bash
 export WHOOING_APP_ID=3
@@ -35,13 +28,13 @@ Or create a `.env` file (see `.env.example`).
 ### stdio mode (Claude Code, Claude Desktop)
 
 ```bash
-node dist/cli.js
+npx whooing-mcp
 ```
 
 ### HTTP mode (daemon)
 
 ```bash
-node dist/cli.js --http --port 8182
+npx whooing-mcp --http --port 8182
 ```
 
 ### Claude Code config (`~/.mcp.json`)
@@ -50,8 +43,8 @@ node dist/cli.js --http --port 8182
 {
   "mcpServers": {
     "whooing": {
-      "command": "node",
-      "args": ["/path/to/whooing-mcp/dist/cli.js"],
+      "command": "npx",
+      "args": ["whooing-mcp"],
       "env": {
         "WHOOING_APP_ID": "3",
         "WHOOING_TOKEN": "...",
@@ -69,8 +62,8 @@ node dist/cli.js --http --port 8182
 {
   "mcpServers": {
     "whooing": {
-      "command": "node",
-      "args": ["/path/to/whooing-mcp/dist/cli.js"],
+      "command": "npx",
+      "args": ["whooing-mcp"],
       "env": {
         "WHOOING_APP_ID": "3",
         "WHOOING_TOKEN": "...",
@@ -108,8 +101,8 @@ Create `~/Library/LaunchAgents/com.whooing.mcp.plist`:
     <key>Label</key><string>com.whooing.mcp</string>
     <key>ProgramArguments</key>
     <array>
-        <string>/opt/homebrew/bin/node</string>
-        <string>/path/to/whooing-mcp/dist/cli.js</string>
+        <string>/opt/homebrew/bin/npx</string>
+        <string>whooing-mcp</string>
         <string>--http</string>
         <string>--port</string>
         <string>8182</string>
@@ -120,6 +113,7 @@ Create `~/Library/LaunchAgents/com.whooing.mcp.plist`:
         <key>WHOOING_TOKEN</key><string>YOUR_TOKEN</string>
         <key>WHOOING_SIGNATURE</key><string>YOUR_SIGNATURE</string>
         <key>WHOOING_SECTION_ID</key><string>YOUR_SECTION_ID</string>
+        <key>PATH</key><string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
     </dict>
     <key>KeepAlive</key><true/>
     <key>RunAtLoad</key><true/>
@@ -132,6 +126,16 @@ Create `~/Library/LaunchAgents/com.whooing.mcp.plist`:
 ```bash
 chmod 600 ~/Library/LaunchAgents/com.whooing.mcp.plist
 launchctl load ~/Library/LaunchAgents/com.whooing.mcp.plist
+```
+
+## Development
+
+```bash
+git clone https://github.com/jmjeong/whooing-mcp.git
+cd whooing-mcp
+npm install
+npm run build
+node dist/cli.js
 ```
 
 ## License
