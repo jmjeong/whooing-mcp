@@ -59,6 +59,32 @@ export class WhooingClient {
     return json.results;
   }
 
+  async apiPost(
+    endpoint: string,
+    body: Record<string, string>
+  ): Promise<unknown> {
+    const res = await fetch(`https://whooing.com/api/${endpoint}`, {
+      method: "POST",
+      headers: {
+        "X-API-KEY": this.getApiKey(),
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+      body: new URLSearchParams(body).toString(),
+    });
+
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`Whooing API error ${res.status}: ${text}`);
+    }
+
+    const json = (await res.json()) as { code: number; message: string; results: unknown };
+    if (json.code !== 200) {
+      throw new Error(`Whooing API error ${json.code}: ${json.message}`);
+    }
+
+    return json.results;
+  }
+
   async loadAccounts(sectionId?: string): Promise<Map<string, AccountInfo>> {
     const sid = sectionId || this.config.defaultSectionId;
     const results = (await this.apiGet("accounts.json", {

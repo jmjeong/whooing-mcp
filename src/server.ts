@@ -41,14 +41,14 @@ export function createWhooingMcpServer(client: WhooingClient): McpServer {
   const server = new McpServer(
     {
       name: "whooing-mcp",
-      version: "0.1.0",
+      version: "0.2.0",
     },
     {
       instructions:
         "Whooing (후잉) is a Korean personal finance tracking service. " +
-        "This server provides read-only access to financial data: " +
+        "This server provides access to financial data: " +
         "spending/income summaries (P&L), transaction lists, balance sheets, " +
-        "and account listings. " +
+        "and account listings, and can create new expense entries. " +
         "Dates use YYYYMMDD format. All amounts are in KRW (원). " +
         "If no dates are specified, the current month is used.",
     }
@@ -202,6 +202,96 @@ export function createWhooingMcpServer(client: WhooingClient): McpServer {
       const text = formatSections(
         results as Parameters<typeof formatSections>[0]
       );
+      return { content: [{ type: "text", text }] };
+    }
+  );
+
+  // whooing_add_entry — Create a new entry
+  server.registerTool(
+    "whooing_add_entry",
+    {
+      description:
+        "Create a new transaction entry in Whooing (e.g. expense, income). " +
+        "Use whooing_accounts first to look up account IDs.",
+      inputSchema: {
+        entry_date: z
+          .string()
+          .regex(/^\d{8}$/)
+          .describe("Transaction date in YYYYMMDD format"),
+        l_account_id: z
+          .string()
+          .describe("Left account ID (e.g. expense category like x11 for 식비)"),
+        r_account_id: z
+          .string()
+          .describe("Right account ID (e.g. payment method like x24 for 삼성카드)"),
+        item: z.string().describe("Item description (store name or item)"),
+        money: z.number().positive().describe("Amount in KRW"),
+        memo: z.string().optional().describe("Optional memo"),
+        section_id: z
+          .string()
+          .optional()
+          .describe("Section ID. Defaults to WHOOING_SECTION_ID env var."),
+      },
+      annotations: { readOnlyHint: false },
+    },
+    async (args) => {
+      const sectionId = args.section_id ?? client.defaultSectionId;
+
+      // Load accounts to resolve account types
+      await client.loadAccounts(sectionId);
+
+      const lInfo = client.getAccountInfo(args.l_account_id);
+      const rInfo = client.getAccountInfo(args.r_account_id);
+
+      if (!lInfo) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Error: Unknown left account ID "${args.l_account_id}". Use whooing_accounts to look up valid IDs.`,
+            },
+          ],
+          isError: true,
+        };
+      }
+      if (!rInfo) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Error: Unknown right account ID "${args.r_account_id}". Use whooing_accounts to look up valid IDs.`,
+            },
+          ],
+          isError: true,
+        };
+      }
+
+      const body: Record<string, string> = {
+        section_id: sectionId,
+        entry_date: args.entry_date,
+        l_account: lInfo.type,
+        l_account_id: args.l_account_id,
+        r_account: rInfo.type,
+        r_account_id: args.r_account_id,
+        item: args.item,
+        money: String(args.money),
+      };
+      if (args.memo) {
+        body.memo = args.memo;
+      }
+
+      await client.apiPost("entries.json", body);
+
+      const formattedDate = `${args.entry_date.slice(0, 4)}-${args.entry_date.slice(4, 6)}-${args.entry_date.slice(6, 8)}`;
+      const text =
+        `Entry created successfully.\n` +
+        `  Date: ${formattedDate}\n` +
+        `  Left: ${lInfo.name} (${lInfo.type})\n` +
+        `  Right: ${rInfo.name} (${rInfo.type})\n` +
+        `  Item: ${args.item}\n` +
+        `  Amount: ${args.money.toLocaleString()}원` +
+        (args.memo ? `\n  Memo: ${args.memo}` : "");
+
       return { content: [{ type: "text", text }] };
     }
   );
