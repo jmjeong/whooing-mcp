@@ -2,7 +2,7 @@
 
 [![npm version](https://img.shields.io/npm/v/whooing-mcp.svg)](https://www.npmjs.com/package/whooing-mcp)
 
-MCP server for [Whooing (후잉)](https://whooing.com) personal finance — read-only queries for spending, transactions, balance sheets, and accounts.
+MCP server for [Whooing (후잉)](https://whooing.com) personal finance — queries and entry creation for spending, transactions, balance sheets, and accounts.
 
 ## Setup
 
@@ -84,10 +84,11 @@ npx whooing-mcp --http --port 8182
 | `whooing_balance` | Balance sheet (assets, liabilities, capital) | `start_date?`, `end_date?`, `section_id?` |
 | `whooing_accounts` | Full account list | `section_id?` |
 | `whooing_sections` | List all sections (가계부) | (none) |
+| `whooing_add_entry` | Create a new transaction entry | `entry_date`, `l_account_id`, `r_account_id`, `item`, `money`, `memo?`, `section_id?` |
 
 - Dates use `YYYYMMDD` format. Default: current month (1st to today).
 - `section_id` defaults to `WHOOING_SECTION_ID` env var.
-- All tools are read-only.
+- `whooing_add_entry` resolves account types automatically from the account cache. Use `whooing_accounts` to look up account IDs first.
 
 ## Running as a daemon (macOS launchd)
 
