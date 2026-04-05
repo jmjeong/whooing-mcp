@@ -41,7 +41,7 @@ export function createWhooingMcpServer(client: WhooingClient): McpServer {
   const server = new McpServer(
     {
       name: "whooing-mcp",
-      version: "0.3.0",
+      version: "0.3.1",
     },
     {
       instructions:
@@ -395,21 +395,18 @@ export function createWhooingMcpServer(client: WhooingClient): McpServer {
     async (args) => {
       const sectionId = args.section_id ?? client.defaultSectionId;
 
-      // Fetch the entry to get its current account info
       await client.loadAccounts(sectionId);
-      const entries = (await client.apiGet("entries.json", {
-        section_id: sectionId,
-        start_date: "20000101",
-        end_date: "20991231",
-        limit: "1",
-      })) as { rows: Array<{ entry_id: number; l_account: string; l_account_id: string; r_account: string; r_account_id: string; entry_date: string }> };
 
-      // We need the original entry's accounts to perform the PUT.
-      // Fetch all recent entries and find the matching one.
+      // Use a wide but valid date range (5 years back to end of current year)
+      const now = new Date();
+      const searchStart = `${now.getFullYear() - 5}0101`;
+      const searchEnd = `${now.getFullYear()}1231`;
+
+      // Fetch recent entries to find the target entry's account info
       const allEntries = (await client.apiGet("entries.json", {
         section_id: sectionId,
-        start_date: "20000101",
-        end_date: "20991231",
+        start_date: searchStart,
+        end_date: searchEnd,
         limit: "500",
       })) as { rows: Array<{ entry_id: number; l_account: string; l_account_id: string; r_account: string; r_account_id: string; entry_date: string; item: string }> };
 
