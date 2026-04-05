@@ -85,10 +85,13 @@ npx whooing-mcp --http --port 8182
 | `whooing_accounts` | Full account list | `section_id?` |
 | `whooing_sections` | List all sections (가계부) | (none) |
 | `whooing_add_entry` | Create a new transaction entry | `entry_date`, `l_account_id`, `r_account_id`, `item`, `money`, `memo?`, `section_id?` |
+| `whooing_update_entry` | Update an existing entry | `entry_id`, `entry_date`, `l_account_id`, `r_account_id`, `item`, `money`, `memo?`, `section_id?` |
+| `whooing_delete_entry` | Soft-delete an entry (zero out) | `entry_id`, `section_id?` |
 
 - Dates use `YYYYMMDD` format. Default: current month (1st to today).
 - `section_id` defaults to `WHOOING_SECTION_ID` env var.
-- `whooing_add_entry` resolves account types automatically from the account cache. Use `whooing_accounts` to look up account IDs first.
+- Write tools resolve account types automatically from the account cache. Use `whooing_accounts` to look up account IDs first.
+- Delete uses soft-delete (sets amount to 0 and prefixes item with [삭제]) due to a Whooing API limitation.
 
 ## Running as a daemon (macOS launchd)
 

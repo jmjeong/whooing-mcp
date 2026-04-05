@@ -41,14 +41,14 @@ export function createWhooingMcpServer(client: WhooingClient): McpServer {
   const server = new McpServer(
     {
       name: "whooing-mcp",
-      version: "0.2.0",
+      version: "0.3.0",
     },
     {
       instructions:
         "Whooing (후잉) is a Korean personal finance tracking service. " +
         "This server provides access to financial data: " +
         "spending/income summaries (P&L), transaction lists, balance sheets, " +
-        "and account listings, and can create new expense entries. " +
+        "and account listings. It can create, update, and delete entries. " +
         "Dates use YYYYMMDD format. All amounts are in KRW (원). " +
         "If no dates are specified, the current month is used.",
     }
@@ -293,6 +293,151 @@ export function createWhooingMcpServer(client: WhooingClient): McpServer {
         (args.memo ? `\n  Memo: ${args.memo}` : "");
 
       return { content: [{ type: "text", text }] };
+    }
+  );
+
+  // whooing_update_entry — Update an existing entry
+  server.registerTool(
+    "whooing_update_entry",
+    {
+      description:
+        "Update an existing transaction entry in Whooing. " +
+        "Use whooing_entries to find the entry_id, and whooing_accounts to look up account IDs.",
+      inputSchema: {
+        entry_id: z.number().int().describe("Entry ID to update (from whooing_entries)"),
+        entry_date: z
+          .string()
+          .regex(/^\d{8}$/)
+          .describe("Transaction date in YYYYMMDD format"),
+        l_account_id: z
+          .string()
+          .describe("Left account ID (e.g. expense category)"),
+        r_account_id: z
+          .string()
+          .describe("Right account ID (e.g. payment method)"),
+        item: z.string().describe("Item description (store name or item)"),
+        money: z.number().min(0).describe("Amount in KRW"),
+        memo: z.string().optional().describe("Optional memo"),
+        section_id: z
+          .string()
+          .optional()
+          .describe("Section ID. Defaults to WHOOING_SECTION_ID env var."),
+      },
+      annotations: { readOnlyHint: false },
+    },
+    async (args) => {
+      const sectionId = args.section_id ?? client.defaultSectionId;
+
+      await client.loadAccounts(sectionId);
+
+      const lInfo = client.getAccountInfo(args.l_account_id);
+      const rInfo = client.getAccountInfo(args.r_account_id);
+
+      if (!lInfo) {
+        return {
+          content: [{ type: "text", text: `Error: Unknown left account ID "${args.l_account_id}". Use whooing_accounts to look up valid IDs.` }],
+          isError: true,
+        };
+      }
+      if (!rInfo) {
+        return {
+          content: [{ type: "text", text: `Error: Unknown right account ID "${args.r_account_id}". Use whooing_accounts to look up valid IDs.` }],
+          isError: true,
+        };
+      }
+
+      const body: Record<string, string> = {
+        section_id: sectionId,
+        entry_date: args.entry_date,
+        l_account: lInfo.type,
+        l_account_id: args.l_account_id,
+        r_account: rInfo.type,
+        r_account_id: args.r_account_id,
+        item: args.item,
+        money: String(args.money),
+      };
+      if (args.memo !== undefined) {
+        body.memo = args.memo;
+      }
+
+      await client.apiPut(`entries/${args.entry_id}.json`, body);
+
+      const formattedDate = `${args.entry_date.slice(0, 4)}-${args.entry_date.slice(4, 6)}-${args.entry_date.slice(6, 8)}`;
+      const text =
+        `Entry ${args.entry_id} updated successfully.\n` +
+        `  Date: ${formattedDate}\n` +
+        `  Left: ${lInfo.name} (${lInfo.type})\n` +
+        `  Right: ${rInfo.name} (${rInfo.type})\n` +
+        `  Item: ${args.item}\n` +
+        `  Amount: ${args.money.toLocaleString()}원` +
+        (args.memo ? `\n  Memo: ${args.memo}` : "");
+
+      return { content: [{ type: "text", text }] };
+    }
+  );
+
+  // whooing_delete_entry — Soft-delete an entry (sets money=0, item=[삭제])
+  server.registerTool(
+    "whooing_delete_entry",
+    {
+      description:
+        "Delete a transaction entry from Whooing by zeroing it out (soft-delete). " +
+        "Use whooing_entries to find the entry_id first.",
+      inputSchema: {
+        entry_id: z.number().int().describe("Entry ID to delete (from whooing_entries)"),
+        section_id: z
+          .string()
+          .optional()
+          .describe("Section ID. Defaults to WHOOING_SECTION_ID env var."),
+      },
+      annotations: { readOnlyHint: false },
+    },
+    async (args) => {
+      const sectionId = args.section_id ?? client.defaultSectionId;
+
+      // Fetch the entry to get its current account info
+      await client.loadAccounts(sectionId);
+      const entries = (await client.apiGet("entries.json", {
+        section_id: sectionId,
+        start_date: "20000101",
+        end_date: "20991231",
+        limit: "1",
+      })) as { rows: Array<{ entry_id: number; l_account: string; l_account_id: string; r_account: string; r_account_id: string; entry_date: string }> };
+
+      // We need the original entry's accounts to perform the PUT.
+      // Fetch all recent entries and find the matching one.
+      const allEntries = (await client.apiGet("entries.json", {
+        section_id: sectionId,
+        start_date: "20000101",
+        end_date: "20991231",
+        limit: "500",
+      })) as { rows: Array<{ entry_id: number; l_account: string; l_account_id: string; r_account: string; r_account_id: string; entry_date: string; item: string }> };
+
+      const entry = allEntries.rows.find((e) => e.entry_id === args.entry_id);
+      if (!entry) {
+        return {
+          content: [{ type: "text", text: `Error: Entry ${args.entry_id} not found.` }],
+          isError: true,
+        };
+      }
+
+      const body: Record<string, string> = {
+        section_id: sectionId,
+        entry_date: entry.entry_date.split(".")[0],
+        l_account: entry.l_account,
+        l_account_id: entry.l_account_id,
+        r_account: entry.r_account,
+        r_account_id: entry.r_account_id,
+        item: `[삭제] ${entry.item}`,
+        money: "0",
+        memo: "",
+      };
+
+      await client.apiPut(`entries/${args.entry_id}.json`, body);
+
+      return {
+        content: [{ type: "text", text: `Entry ${args.entry_id} deleted (soft-delete: amount set to 0).` }],
+      };
     }
   );
 
