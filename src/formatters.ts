@@ -105,7 +105,7 @@ export function formatEntries(
     const item = row.item || "(항목 없음)";
     const memo = row.memo ? ` — ${row.memo}` : "";
     lines.push(
-      `- **${date}** ${item} ${formatAmount(row.money)} [${lName} ← ${rName}]${memo}`
+      `- **${date}** ${item} ${formatAmount(row.money)} [${lName} ← ${rName}]${memo} (id:${row.entry_id})`
     );
   }
 

@@ -1,6 +1,6 @@
 {
   "name": "whooing-mcp",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "MCP server for Whooing (후잉) personal finance — queries and entry creation for spending, transactions, budgets, and balance sheets",
   "type": "module",
   "main": "./dist/server.js",
