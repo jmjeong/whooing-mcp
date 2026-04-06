@@ -11,6 +11,7 @@ import {
   formatFrequentItems,
   formatLatestItems,
   formatCalendar,
+  formatBudget,
 } from "./formatters.js";
 
 /** Strip hyphens so both "20260423" and "2026-04-23" become "20260423". */
@@ -50,14 +51,14 @@ export function createWhooingMcpServer(client: WhooingClient): McpServer {
   const server = new McpServer(
     {
       name: "whooing-mcp",
-      version: "0.3.2",
+      version: "0.3.3",
     },
     {
       instructions:
         "Whooing (후잉) is a Korean personal finance tracking service. " +
         "This server provides access to financial data: " +
         "spending/income summaries (P&L), transaction lists, balance sheets, " +
-        "and account listings. It can create, update, and delete entries. " +
+        "budgets, and account listings. It can create, update, and delete entries. " +
         "Dates use YYYYMMDD format. All amounts are in KRW (원). " +
         "If no dates are specified, the current month is used.",
     }
@@ -211,6 +212,37 @@ export function createWhooingMcpServer(client: WhooingClient): McpServer {
 
       const text = formatBalance(
         results as Parameters<typeof formatBalance>[0],
+        client.getAccountCache(),
+        startDate,
+        endDate
+      );
+      return { content: [{ type: "text", text }] };
+    }
+  );
+
+  // whooing_budget — Budget status
+  server.registerTool(
+    "whooing_budget",
+    {
+      description: "Get budget status for a date range",
+      inputSchema: dateRangeSchema,
+      annotations: { readOnlyHint: true },
+    },
+    async (args) => {
+      const defaults = getDateDefaults();
+      const startDate = normalizeDate(args.start_date ?? defaults.startDate);
+      const endDate = normalizeDate(args.end_date ?? defaults.endDate);
+      const sectionId = args.section_id ?? client.defaultSectionId;
+
+      await client.loadAccounts(sectionId);
+      const results = await client.apiGet("budget.json", {
+        section_id: sectionId,
+        start_date: startDate,
+        end_date: endDate,
+      });
+
+      const text = formatBudget(
+        results as Parameters<typeof formatBudget>[0],
         client.getAccountCache(),
         startDate,
         endDate
@@ -459,10 +491,44 @@ export function createWhooingMcpServer(client: WhooingClient): McpServer {
     async (args) => {
       const sectionId = args.section_id ?? client.defaultSectionId;
 
-      await client.apiDelete(`entries/${args.entry_id}/${sectionId}.json`);
+      await client.loadAccounts(sectionId);
+
+      // Fetch the specific entry to find the target entry's account info
+      const entry = (await client.apiGet(`entries/${args.entry_id}.json`, {
+        section_id: sectionId,
+      })) as {
+        entry_id: number;
+        l_account: string;
+        l_account_id: string;
+        r_account: string;
+        r_account_id: string;
+        entry_date: string;
+        item: string;
+      };
+
+      if (!entry || !entry.entry_id) {
+        return {
+          content: [{ type: "text", text: `Error: Entry ${args.entry_id} not found.` }],
+          isError: true,
+        };
+      }
+
+      const body: Record<string, string> = {
+        section_id: sectionId,
+        entry_date: String(entry.entry_date).split(".")[0],
+        l_account: entry.l_account,
+        l_account_id: entry.l_account_id,
+        r_account: entry.r_account,
+        r_account_id: entry.r_account_id,
+        item: `[삭제] ${entry.item}`,
+        money: "0",
+        memo: "",
+      };
+
+      await client.apiPut(`entries/${args.entry_id}.json`, body);
 
       return {
-        content: [{ type: "text", text: `Entry ${args.entry_id} deleted successfully.` }],
+        content: [{ type: "text", text: `Entry ${args.entry_id} deleted (soft-delete: amount set to 0).` }],
       };
     }
   );

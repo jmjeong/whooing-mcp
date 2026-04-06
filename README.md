@@ -82,6 +82,7 @@ npx whooing-mcp --http --port 8182
 | `whooing_pl` | Profit & loss (spending/income by category) | `start_date?`, `end_date?`, `section_id?` |
 | `whooing_entries` | Transaction list with account names; supports client-side filters | `start_date?`, `end_date?`, `limit?`, `account_ids?`, `account_name?`, `l_account_id?`, `r_account_id?`, `item_contains?`, `memo_contains?`, `query?`, `keywords?`, `section_id?` |
 | `whooing_balance` | Balance sheet (assets, liabilities, capital) | `start_date?`, `end_date?`, `section_id?` |
+| `whooing_budget` | Budget status | `start_date?`, `end_date?`, `section_id?` |
 | `whooing_accounts` | Full account list | `section_id?` |
 | `whooing_sections` | List all sections (가계부) | (none) |
 | `whooing_calendar` | Daily income/expense overview by month | `start_month?`, `end_month?`, `section_id?` |
