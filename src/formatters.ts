@@ -250,6 +250,136 @@ export function formatAccounts(
   return lines.join("\n");
 }
 
+interface FrequentItem {
+  item_id: string;
+  item: string;
+  money: number;
+  l_account: string;
+  l_account_id: string;
+  r_account: string;
+  r_account_id: string;
+}
+
+export function formatFrequentItems(
+  results: Record<string, FrequentItem[]>,
+  accounts: Map<string, AccountInfo>
+): string {
+  const lines: string[] = [];
+  lines.push("## 자주 쓰는 거래");
+  lines.push("");
+
+  let hasItems = false;
+  for (const [slot, items] of Object.entries(results)) {
+    if (!Array.isArray(items) || items.length === 0) continue;
+    hasItems = true;
+    lines.push(`### ${slot}`);
+    for (const item of items) {
+      const lName = accounts.get(item.l_account_id)?.name ?? item.l_account_id;
+      const rName = accounts.get(item.r_account_id)?.name ?? item.r_account_id;
+      lines.push(
+        `- **${item.item}** ${formatAmount(item.money)} [${lName} ← ${rName}] (id:${item.item_id})`
+      );
+    }
+    lines.push("");
+  }
+
+  if (!hasItems) {
+    lines.push("등록된 자주 쓰는 거래가 없습니다.");
+  }
+
+  return lines.join("\n");
+}
+
+interface LatestItem {
+  item: string;
+  money: number;
+  l_account: string;
+  l_account_id: string;
+  r_account: string;
+  r_account_id: string;
+}
+
+export function formatLatestItems(
+  results: LatestItem[],
+  accounts: Map<string, AccountInfo>
+): string {
+  const lines: string[] = [];
+  lines.push("## 최근 거래 항목 (자동완성용)");
+  lines.push("");
+
+  if (!Array.isArray(results) || results.length === 0) {
+    lines.push("최근 60일간 거래 항목이 없습니다.");
+    return lines.join("\n");
+  }
+
+  for (const item of results) {
+    const lName = accounts.get(item.l_account_id)?.name ?? item.l_account_id;
+    const rName = accounts.get(item.r_account_id)?.name ?? item.r_account_id;
+    lines.push(
+      `- **${item.item}** ${formatAmount(item.money)} [${lName} ← ${rName}]`
+    );
+  }
+
+  return lines.join("\n");
+}
+
+interface CalendarDay {
+  date: string;
+  day: number;
+  count: number;
+  income: number;
+  expenses: number;
+  etc: number;
+}
+
+interface CalendarResults {
+  aggregate?: { income: number; expenses: number; etc: number };
+  rows?: Record<string, CalendarDay[]>;
+}
+
+export function formatCalendar(results: CalendarResults): string {
+  const lines: string[] = [];
+
+  const agg = results.aggregate;
+  if (agg) {
+    lines.push("## 월간 요약");
+    lines.push(`- 수입: ${formatAmount(agg.income)}`);
+    lines.push(`- 지출: ${formatAmount(agg.expenses)}`);
+    if (agg.etc) lines.push(`- 기타: ${formatAmount(agg.etc)}`);
+    lines.push("");
+  }
+
+  const rows = results.rows ?? {};
+  const months = Object.keys(rows).sort();
+
+  if (months.length === 0) {
+    lines.push("해당 기간에 데이터가 없습니다.");
+    return lines.join("\n");
+  }
+
+  const dayNames = ["일", "월", "화", "수", "목", "금", "토"];
+
+  for (const month of months) {
+    const days = rows[month].filter((d) => d.count > 0);
+    if (days.length === 0) continue;
+
+    const label = `${month.slice(0, 4)}-${month.slice(4, 6)}`;
+    lines.push(`### ${label}`);
+    for (const d of days) {
+      const dateStr = `${d.date.slice(0, 4)}-${d.date.slice(4, 6)}-${d.date.slice(6, 8)}`;
+      const dayName = dayNames[d.day] ?? "";
+      const parts: string[] = [];
+      if (d.income > 0) parts.push(`수입 ${formatAmount(d.income)}`);
+      if (d.expenses > 0) parts.push(`지출 ${formatAmount(d.expenses)}`);
+      if (d.etc > 0) parts.push(`기타 ${formatAmount(d.etc)}`);
+      lines.push(`- ${dateStr}(${dayName}) ${d.count}건: ${parts.join(", ")}`);
+    }
+    lines.push("");
+  }
+
+  return lines.join("\n");
+}
+
 interface SectionItem {
   section_id: string;
   title: string;

@@ -7,6 +7,9 @@ import {
   formatBalance,
   formatAccounts,
   formatSections,
+  formatFrequentItems,
+  formatLatestItems,
+  formatCalendar,
 } from "./formatters.js";
 
 function getDateDefaults(): { startDate: string; endDate: string } {
@@ -403,6 +406,112 @@ export function createWhooingMcpServer(client: WhooingClient): McpServer {
       return {
         content: [{ type: "text", text: `Entry ${args.entry_id} deleted successfully.` }],
       };
+    }
+  );
+
+  // whooing_calendar — Daily income/expense overview
+  server.registerTool(
+    "whooing_calendar",
+    {
+      description:
+        "Get daily income/expense overview for a month. " +
+        "Shows per-day transaction counts, income, and expenses.",
+      inputSchema: {
+        start_month: z
+          .string()
+          .optional()
+          .describe("Start month in YYYYMM format (e.g., 202604). Defaults to current month."),
+        end_month: z
+          .string()
+          .optional()
+          .describe("End month in YYYYMM format (e.g., 202604). Defaults to current month."),
+        section_id: z
+          .string()
+          .optional()
+          .describe("Section ID. Defaults to WHOOING_SECTION_ID env var."),
+      },
+      annotations: { readOnlyHint: true },
+    },
+    async (args) => {
+      const sectionId = args.section_id ?? client.defaultSectionId;
+      const now = new Date();
+      const currentMonth =
+        `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, "0")}`;
+      const startMonth = args.start_month ?? currentMonth;
+      const endMonth = args.end_month ?? currentMonth;
+
+      const results = await client.apiGet("calendar.json", {
+        section_id: sectionId,
+        start_date: startMonth,
+        end_date: endMonth,
+      });
+
+      const text = formatCalendar(
+        results as Parameters<typeof formatCalendar>[0]
+      );
+      return { content: [{ type: "text", text }] };
+    }
+  );
+
+  // whooing_frequent_items — List saved frequent transactions
+  server.registerTool(
+    "whooing_frequent_items",
+    {
+      description:
+        "List frequently used transactions (templates for quick entry). " +
+        "Returns saved transaction templates organized by slots.",
+      inputSchema: {
+        section_id: z
+          .string()
+          .optional()
+          .describe("Section ID. Defaults to WHOOING_SECTION_ID env var."),
+      },
+      annotations: { readOnlyHint: true },
+    },
+    async (args) => {
+      const sectionId = args.section_id ?? client.defaultSectionId;
+      await client.loadAccounts(sectionId);
+
+      const results = await client.apiGet("frequent_items.json", {
+        section_id: sectionId,
+      });
+
+      const text = formatFrequentItems(
+        results as Parameters<typeof formatFrequentItems>[0],
+        client.getAccountCache()
+      );
+      return { content: [{ type: "text", text }] };
+    }
+  );
+
+  // whooing_latest_items — Recent transaction items for autocomplete
+  server.registerTool(
+    "whooing_latest_items",
+    {
+      description:
+        "Get recent unique transaction items from the past 60 days. " +
+        "Useful for autocomplete suggestions when adding new entries.",
+      inputSchema: {
+        section_id: z
+          .string()
+          .optional()
+          .describe("Section ID. Defaults to WHOOING_SECTION_ID env var."),
+      },
+      annotations: { readOnlyHint: true },
+    },
+    async (args) => {
+      const sectionId = args.section_id ?? client.defaultSectionId;
+      await client.loadAccounts(sectionId);
+
+      const results = await client.apiGet("entries/latest_items.json", {
+        section_id: sectionId,
+      });
+
+      const text = formatLatestItems(
+        results as Parameters<typeof formatLatestItems>[0],
+        client.getAccountCache()
+      );
+      return { content: [{ type: "text", text }] };
     }
   );
 
