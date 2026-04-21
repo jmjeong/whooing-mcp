@@ -1,11 +1,12 @@
 {
   "name": "whooing-mcp",
   "version": "0.3.2",
-  "description": "MCP server for Whooing (후잉) personal finance — queries and entry creation for spending, transactions, budgets, and balance sheets",
+  "description": "MCP server for Whooing (후잉) personal finance — manage transactions, view spending, balance sheets, budgets, and more",
   "type": "module",
   "main": "./dist/server.js",
   "scripts": {
-    "build": "tsc"
+    "build": "tsc",
+    "test": "vitest run"
   },
   "keywords": [
     "mcp",
@@ -21,12 +22,13 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.27.1",
-    "zod": "^3.23.0",
-    "dotenv": "^16.4.0"
+    "dotenv": "^16.4.0",
+    "zod": "^3.23.0"
   },
   "devDependencies": {
+    "@types/node": "^22.0.0",
     "typescript": "^5.9.0",
-    "@types/node": "^22.0.0"
+    "vitest": "^4.1.5"
   },
   "repository": {
     "type": "git",

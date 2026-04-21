@@ -2,7 +2,7 @@
 
 [![npm version](https://img.shields.io/npm/v/whooing-mcp.svg)](https://www.npmjs.com/package/whooing-mcp)
 
-MCP server for [Whooing (후잉)](https://whooing.com) personal finance — queries and entry creation for spending, transactions, balance sheets, and accounts.
+MCP server for [Whooing (후잉)](https://whooing.com) personal finance — manage transactions, view spending, balance sheets, budgets, and more.
 
 ## Setup
 
@@ -84,14 +84,17 @@ npx whooing-mcp --http --port 8182
 | `whooing_balance` | Balance sheet (assets, liabilities, capital) | `start_date?`, `end_date?`, `section_id?` |
 | `whooing_accounts` | Full account list | `section_id?` |
 | `whooing_sections` | List all sections (가계부) | (none) |
+| `whooing_calendar` | Daily income/expense overview by month | `start_month?`, `end_month?`, `section_id?` |
+| `whooing_frequent_items` | Saved frequent transaction templates | `section_id?` |
+| `whooing_latest_items` | Recent unique items for autocomplete (60 days) | `section_id?` |
 | `whooing_add_entry` | Create a new transaction entry | `entry_date`, `l_account_id`, `r_account_id`, `item`, `money`, `memo?`, `section_id?` |
 | `whooing_update_entry` | Update an existing entry | `entry_id`, `entry_date`, `l_account_id`, `r_account_id`, `item`, `money`, `memo?`, `section_id?` |
-| `whooing_delete_entry` | Soft-delete an entry (zero out) | `entry_id`, `section_id?` |
+| `whooing_delete_entry` | Delete an entry | `entry_id`, `section_id?` |
 
 - Dates use `YYYYMMDD` format. Default: current month (1st to today).
+- Calendar months use `YYYYMM` format. Default: current month.
 - `section_id` defaults to `WHOOING_SECTION_ID` env var.
 - Write tools resolve account types automatically from the account cache. Use `whooing_accounts` to look up account IDs first.
-- Delete uses soft-delete (sets amount to 0 and prefixes item with [삭제]) due to a Whooing API limitation.
 
 ## Running as a daemon (macOS launchd)
 
