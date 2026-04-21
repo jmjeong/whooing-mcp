@@ -230,8 +230,7 @@ export function createWhooingMcpServer(client: WhooingClient): McpServer {
         item: z.string().describe("Item description (store name or item)"),
         money: z
           .number()
-          .refine((n) => n !== 0, { message: "Amount must not be zero" })
-          .describe("Amount in KRW (negative for balance adjustments)"),
+          .describe("Amount in KRW (negative for balance adjustments, 0 allowed)"),
         memo: z.string().optional().describe("Optional memo"),
         section_id: z
           .string()
@@ -322,7 +321,7 @@ export function createWhooingMcpServer(client: WhooingClient): McpServer {
           .string()
           .describe("Right account ID (e.g. payment method)"),
         item: z.string().describe("Item description (store name or item)"),
-        money: z.number().min(0).describe("Amount in KRW"),
+        money: z.number().describe("Amount in KRW (negative for balance adjustments, 0 allowed)"),
         memo: z.string().optional().describe("Optional memo"),
         section_id: z
           .string()
