@@ -225,7 +225,10 @@ export function createWhooingMcpServer(client: WhooingClient): McpServer {
           .string()
           .describe("Right account ID (e.g. payment method like x24 for 삼성카드)"),
         item: z.string().describe("Item description (store name or item)"),
-        money: z.number().positive().describe("Amount in KRW"),
+        money: z
+          .number()
+          .refine((n) => n !== 0, { message: "Amount must not be zero" })
+          .describe("Amount in KRW (negative for balance adjustments)"),
         memo: z.string().optional().describe("Optional memo"),
         section_id: z
           .string()
