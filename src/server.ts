@@ -379,12 +379,12 @@ export function createWhooingMcpServer(client: WhooingClient): McpServer {
     }
   );
 
-  // whooing_delete_entry — Soft-delete an entry (sets money=0, item=[삭제])
+  // whooing_delete_entry — Actually delete an entry via Whooing DELETE API
   server.registerTool(
     "whooing_delete_entry",
     {
       description:
-        "Delete a transaction entry from Whooing by zeroing it out (soft-delete). " +
+        "Delete a transaction entry from Whooing. " +
         "Use whooing_entries to find the entry_id first.",
       inputSchema: {
         entry_id: z.number().int().describe("Entry ID to delete (from whooing_entries)"),
@@ -398,45 +398,10 @@ export function createWhooingMcpServer(client: WhooingClient): McpServer {
     async (args) => {
       const sectionId = args.section_id ?? client.defaultSectionId;
 
-      await client.loadAccounts(sectionId);
-
-      // Use a wide but valid date range (5 years back to end of current year)
-      const now = new Date();
-      const searchStart = `${now.getFullYear() - 5}0101`;
-      const searchEnd = `${now.getFullYear()}1231`;
-
-      // Fetch recent entries to find the target entry's account info
-      const allEntries = (await client.apiGet("entries.json", {
-        section_id: sectionId,
-        start_date: searchStart,
-        end_date: searchEnd,
-        limit: "500",
-      })) as { rows: Array<{ entry_id: number; l_account: string; l_account_id: string; r_account: string; r_account_id: string; entry_date: string; item: string }> };
-
-      const entry = allEntries.rows.find((e) => e.entry_id === args.entry_id);
-      if (!entry) {
-        return {
-          content: [{ type: "text", text: `Error: Entry ${args.entry_id} not found.` }],
-          isError: true,
-        };
-      }
-
-      const body: Record<string, string> = {
-        section_id: sectionId,
-        entry_date: entry.entry_date.split(".")[0],
-        l_account: entry.l_account,
-        l_account_id: entry.l_account_id,
-        r_account: entry.r_account,
-        r_account_id: entry.r_account_id,
-        item: `[삭제] ${entry.item}`,
-        money: "0",
-        memo: "",
-      };
-
-      await client.apiPut(`entries/${args.entry_id}.json`, body);
+      await client.apiDelete(`entries/${args.entry_id}/${sectionId}.json`);
 
       return {
-        content: [{ type: "text", text: `Entry ${args.entry_id} deleted (soft-delete: amount set to 0).` }],
+        content: [{ type: "text", text: `Entry ${args.entry_id} deleted successfully.` }],
       };
     }
   );
