@@ -12,6 +12,11 @@ import {
   formatCalendar,
 } from "./formatters.js";
 
+/** Strip hyphens so both "20260423" and "2026-04-23" become "20260423". */
+function normalizeDate(d: string): string {
+  return d.replace(/-/g, "");
+}
+
 function getDateDefaults(): { startDate: string; endDate: string } {
   const now = new Date();
   const y = now.getFullYear();
@@ -26,12 +31,12 @@ function getDateDefaults(): { startDate: string; endDate: string } {
 const dateRangeSchema = {
   start_date: z
     .string()
-    .regex(/^\d{8}$/)
+    .regex(/^\d{4}-?\d{2}-?\d{2}$/)
     .optional()
     .describe("Start date (YYYYMMDD). Defaults to 1st of current month."),
   end_date: z
     .string()
-    .regex(/^\d{8}$/)
+    .regex(/^\d{4}-?\d{2}-?\d{2}$/)
     .optional()
     .describe("End date (YYYYMMDD). Defaults to today."),
   section_id: z
@@ -68,8 +73,8 @@ export function createWhooingMcpServer(client: WhooingClient): McpServer {
     },
     async (args) => {
       const defaults = getDateDefaults();
-      const startDate = args.start_date ?? defaults.startDate;
-      const endDate = args.end_date ?? defaults.endDate;
+      const startDate = normalizeDate(args.start_date ?? defaults.startDate);
+      const endDate = normalizeDate(args.end_date ?? defaults.endDate);
       const sectionId = args.section_id ?? client.defaultSectionId;
 
       await client.loadAccounts(sectionId);
@@ -109,8 +114,8 @@ export function createWhooingMcpServer(client: WhooingClient): McpServer {
     },
     async (args) => {
       const defaults = getDateDefaults();
-      const startDate = args.start_date ?? defaults.startDate;
-      const endDate = args.end_date ?? defaults.endDate;
+      const startDate = normalizeDate(args.start_date ?? defaults.startDate);
+      const endDate = normalizeDate(args.end_date ?? defaults.endDate);
       const sectionId = args.section_id ?? client.defaultSectionId;
       const limit = args.limit ?? 20;
 
@@ -141,8 +146,8 @@ export function createWhooingMcpServer(client: WhooingClient): McpServer {
     },
     async (args) => {
       const defaults = getDateDefaults();
-      const startDate = args.start_date ?? defaults.startDate;
-      const endDate = args.end_date ?? defaults.endDate;
+      const startDate = normalizeDate(args.start_date ?? defaults.startDate);
+      const endDate = normalizeDate(args.end_date ?? defaults.endDate);
       const sectionId = args.section_id ?? client.defaultSectionId;
 
       await client.loadAccounts(sectionId);
@@ -219,8 +224,8 @@ export function createWhooingMcpServer(client: WhooingClient): McpServer {
       inputSchema: {
         entry_date: z
           .string()
-          .regex(/^\d{8}$/)
-          .describe("Transaction date in YYYYMMDD format"),
+          .regex(/^\d{4}-?\d{2}-?\d{2}$/)
+          .describe("Transaction date in YYYYMMDD format (e.g. 20260423)"),
         l_account_id: z
           .string()
           .describe("Left account ID (e.g. expense category like x11 for 식비)"),
@@ -240,6 +245,7 @@ export function createWhooingMcpServer(client: WhooingClient): McpServer {
       annotations: { readOnlyHint: false },
     },
     async (args) => {
+      const entryDate = normalizeDate(args.entry_date);
       const sectionId = args.section_id ?? client.defaultSectionId;
 
       // Load accounts to resolve account types
@@ -273,7 +279,7 @@ export function createWhooingMcpServer(client: WhooingClient): McpServer {
 
       const body: Record<string, string> = {
         section_id: sectionId,
-        entry_date: args.entry_date,
+        entry_date: entryDate,
         l_account: lInfo.type,
         l_account_id: args.l_account_id,
         r_account: rInfo.type,
@@ -287,7 +293,7 @@ export function createWhooingMcpServer(client: WhooingClient): McpServer {
 
       await client.apiPost("entries.json", body);
 
-      const formattedDate = `${args.entry_date.slice(0, 4)}-${args.entry_date.slice(4, 6)}-${args.entry_date.slice(6, 8)}`;
+      const formattedDate = `${entryDate.slice(0, 4)}-${entryDate.slice(4, 6)}-${entryDate.slice(6, 8)}`;
       const text =
         `Entry created successfully.\n` +
         `  Date: ${formattedDate}\n` +
@@ -312,8 +318,8 @@ export function createWhooingMcpServer(client: WhooingClient): McpServer {
         entry_id: z.number().int().describe("Entry ID to update (from whooing_entries)"),
         entry_date: z
           .string()
-          .regex(/^\d{8}$/)
-          .describe("Transaction date in YYYYMMDD format"),
+          .regex(/^\d{4}-?\d{2}-?\d{2}$/)
+          .describe("Transaction date in YYYYMMDD format (e.g. 20260423)"),
         l_account_id: z
           .string()
           .describe("Left account ID (e.g. expense category)"),
@@ -331,6 +337,7 @@ export function createWhooingMcpServer(client: WhooingClient): McpServer {
       annotations: { readOnlyHint: false },
     },
     async (args) => {
+      const entryDate = normalizeDate(args.entry_date);
       const sectionId = args.section_id ?? client.defaultSectionId;
 
       await client.loadAccounts(sectionId);
@@ -353,7 +360,7 @@ export function createWhooingMcpServer(client: WhooingClient): McpServer {
 
       const body: Record<string, string> = {
         section_id: sectionId,
-        entry_date: args.entry_date,
+        entry_date: entryDate,
         l_account: lInfo.type,
         l_account_id: args.l_account_id,
         r_account: rInfo.type,
@@ -367,7 +374,7 @@ export function createWhooingMcpServer(client: WhooingClient): McpServer {
 
       await client.apiPut(`entries/${args.entry_id}.json`, body);
 
-      const formattedDate = `${args.entry_date.slice(0, 4)}-${args.entry_date.slice(4, 6)}-${args.entry_date.slice(6, 8)}`;
+      const formattedDate = `${entryDate.slice(0, 4)}-${entryDate.slice(4, 6)}-${entryDate.slice(6, 8)}`;
       const text =
         `Entry ${args.entry_id} updated successfully.\n` +
         `  Date: ${formattedDate}\n` +
