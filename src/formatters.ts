@@ -366,7 +366,7 @@ export function formatCalendar(results: CalendarResults): string {
     const label = `${month.slice(0, 4)}-${month.slice(4, 6)}`;
     lines.push(`### ${label}`);
     for (const d of days) {
-      const dateStr = `${d.date.slice(0, 4)}-${d.date.slice(4, 6)}-${d.date.slice(6, 8)}`;
+      const dateStr = `${String(d.date).slice(0, 4)}-${String(d.date).slice(4, 6)}-${String(d.date).slice(6, 8)}`;
       const dayName = dayNames[d.day] ?? "";
       const parts: string[] = [];
       if (d.income > 0) parts.push(`수입 ${formatAmount(d.income)}`);
