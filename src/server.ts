@@ -2,6 +2,8 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { WhooingClient } from "./whooing-client.js";
 import {
+  type EntryFilterOptions,
+  type EntryResults,
   formatPL,
   formatEntries,
   filterEntries,
@@ -99,6 +101,20 @@ const entryFilterSchema = {
     .array(z.string())
     .optional()
     .describe("Any keyword to match case-insensitively against item or memo."),
+  page_limit: z
+    .number()
+    .int()
+    .min(1)
+    .max(100)
+    .optional()
+    .describe("Entries API page size for paginated search. Defaults to 100."),
+  max_pages: z
+    .number()
+    .int()
+    .min(1)
+    .max(100)
+    .optional()
+    .describe("Maximum pages to fetch when paginating with the entries max cursor."),
 };
 
 function resolveAccountIdsFromName(
@@ -118,11 +134,254 @@ function resolveAccountIdsFromName(
   return resolved.length > 0 ? [...new Set(resolved)] : undefined;
 }
 
+function wildcardContains(value: string): string {
+  return value.includes("*") ? value : `*${value}*`;
+}
+
+interface EntryQueryArgs {
+  section_id?: string;
+  start_date?: string;
+  end_date?: string;
+  limit?: number;
+  page_limit?: number;
+  max_pages?: number;
+  account_ids?: string[];
+  account_name?: string;
+  l_account_id?: string;
+  r_account_id?: string;
+  min_money?: number;
+  max_money?: number;
+  item_contains?: string;
+  memo_contains?: string;
+  query?: string;
+  keywords?: string[];
+}
+
+interface EntryQueryResult {
+  results: EntryResults;
+  fetchedRows: number;
+  pagesFetched: number;
+  stoppedByMaxPages: boolean;
+}
+
+function buildEntriesApiParams(
+  sectionId: string,
+  startDate: string,
+  endDate: string,
+  limit: number,
+  accountCache: Map<string, { name: string; type: string }>,
+  args: EntryQueryArgs,
+  max?: string
+): { params: Record<string, string>; clientFilters: EntryFilterOptions } {
+  const params: Record<string, string> = {
+    section_id: sectionId,
+    start_date: startDate,
+    end_date: endDate,
+    limit: String(limit),
+    sort_column: "entry_date",
+    sort_order: "desc",
+  };
+  if (max) {
+    params.max = max;
+  }
+
+  const accountIds = resolveAccountIdsFromName(
+    accountCache,
+    args.account_ids,
+    args.account_name
+  );
+  const clientFilters: EntryFilterOptions = {
+    account_ids: accountIds,
+    l_account_id: args.l_account_id,
+    r_account_id: args.r_account_id,
+    min_money: args.min_money,
+    max_money: args.max_money,
+    item_contains: args.item_contains,
+    memo_contains: args.memo_contains,
+    query: args.query,
+    keywords: args.keywords,
+  };
+
+  if (accountIds?.length === 1) {
+    const accountId = accountIds[0];
+    const info = accountCache.get(accountId);
+    if (info) {
+      params.account = info.type;
+      params.account_id = accountId;
+      clientFilters.account_ids = undefined;
+    }
+  }
+  if (args.l_account_id) {
+    const info = accountCache.get(args.l_account_id);
+    if (info) {
+      params.l_account = info.type;
+      params.l_account_id = args.l_account_id;
+      clientFilters.l_account_id = undefined;
+    }
+  }
+  if (args.r_account_id) {
+    const info = accountCache.get(args.r_account_id);
+    if (info) {
+      params.r_account = info.type;
+      params.r_account_id = args.r_account_id;
+      clientFilters.r_account_id = undefined;
+    }
+  }
+  if (args.min_money !== undefined) {
+    params.money_from = String(args.min_money);
+    clientFilters.min_money = undefined;
+  }
+  if (args.max_money !== undefined) {
+    params.money_to = String(args.max_money);
+    clientFilters.max_money = undefined;
+  }
+  if (args.item_contains && !args.query && !args.keywords?.length) {
+    params.item = wildcardContains(args.item_contains);
+    clientFilters.item_contains = undefined;
+  }
+  if (args.memo_contains && !args.query && !args.keywords?.length) {
+    params.memo = wildcardContains(args.memo_contains);
+    clientFilters.memo_contains = undefined;
+  }
+
+  return { params, clientFilters };
+}
+
+async function fetchEntriesPage(
+  client: WhooingClient,
+  params: Record<string, string>
+): Promise<EntryResults> {
+  return (await client.apiGet("entries.json", params)) as EntryResults;
+}
+
+async function fetchEntriesPaginated(
+  client: WhooingClient,
+  sectionId: string,
+  startDate: string,
+  endDate: string,
+  accountCache: Map<string, { name: string; type: string }>,
+  args: EntryQueryArgs,
+  defaults: { pageLimit: number; maxPages: number }
+): Promise<EntryQueryResult> {
+  const pageLimit = args.page_limit ?? defaults.pageLimit;
+  const maxPages = args.max_pages ?? defaults.maxPages;
+  const rows: NonNullable<EntryResults["rows"]> = [];
+  let maxCursor: string | undefined;
+  let pagesFetched = 0;
+  let stoppedByMaxPages = false;
+
+  for (let page = 0; page < maxPages; page++) {
+    const { params } = buildEntriesApiParams(
+      sectionId,
+      startDate,
+      endDate,
+      pageLimit,
+      accountCache,
+      args,
+      maxCursor
+    );
+    const pageResults = await fetchEntriesPage(client, params);
+    const pageRows = pageResults.rows ?? [];
+    pagesFetched++;
+
+    if (pageRows.length === 0) {
+      break;
+    }
+
+    rows.push(...pageRows);
+    const nextCursor = String(pageRows[pageRows.length - 1]?.entry_date ?? "");
+    if (!nextCursor || pageRows.length < pageLimit || nextCursor === maxCursor) {
+      break;
+    }
+    maxCursor = nextCursor;
+
+    if (page === maxPages - 1) {
+      stoppedByMaxPages = true;
+    }
+  }
+
+  const { clientFilters } = buildEntriesApiParams(
+    sectionId,
+    startDate,
+    endDate,
+    pageLimit,
+    accountCache,
+    args
+  );
+  return {
+    results: filterEntries({ rows }, clientFilters),
+    fetchedRows: rows.length,
+    pagesFetched,
+    stoppedByMaxPages,
+  };
+}
+
+function mergeEntryQueryResults(results: EntryQueryResult[]): EntryQueryResult {
+  const rowsById = new Map<number, NonNullable<EntryResults["rows"]>[number]>();
+  for (const result of results) {
+    for (const row of result.results.rows ?? []) {
+      rowsById.set(row.entry_id, row);
+    }
+  }
+
+  const rows = [...rowsById.values()].sort((a, b) =>
+    String(b.entry_date).localeCompare(String(a.entry_date))
+  );
+
+  return {
+    results: { rows },
+    fetchedRows: results.reduce((sum, result) => sum + result.fetchedRows, 0),
+    pagesFetched: results.reduce((sum, result) => sum + result.pagesFetched, 0),
+    stoppedByMaxPages: results.some((result) => result.stoppedByMaxPages),
+  };
+}
+
+async function searchEntriesEfficiently(
+  client: WhooingClient,
+  sectionId: string,
+  startDate: string,
+  endDate: string,
+  accountCache: Map<string, { name: string; type: string }>,
+  args: EntryQueryArgs
+): Promise<EntryQueryResult> {
+  if (args.query && !args.item_contains && !args.memo_contains && !args.keywords?.length) {
+    const itemResults = await fetchEntriesPaginated(
+      client,
+      sectionId,
+      startDate,
+      endDate,
+      accountCache,
+      { ...args, item_contains: args.query, query: undefined },
+      { pageLimit: 100, maxPages: 20 }
+    );
+    const memoResults = await fetchEntriesPaginated(
+      client,
+      sectionId,
+      startDate,
+      endDate,
+      accountCache,
+      { ...args, memo_contains: args.query, query: undefined },
+      { pageLimit: 100, maxPages: 20 }
+    );
+    return mergeEntryQueryResults([itemResults, memoResults]);
+  }
+
+  return fetchEntriesPaginated(
+    client,
+    sectionId,
+    startDate,
+    endDate,
+    accountCache,
+    args,
+    { pageLimit: 100, maxPages: 20 }
+  );
+}
+
 export function createWhooingMcpServer(client: WhooingClient): McpServer {
   const server = new McpServer(
     {
       name: "whooing-mcp",
-      version: "0.3.5",
+      version: "0.3.6",
     },
     {
       instructions:
@@ -187,32 +446,19 @@ export function createWhooingMcpServer(client: WhooingClient): McpServer {
       const limit = args.limit ?? 20;
 
       await client.loadAccounts(sectionId);
-      const results = await client.apiGet("entries.json", {
-        section_id: sectionId,
-        start_date: startDate,
-        end_date: endDate,
-        limit: String(limit),
-      });
-
       const accountCache = client.getAccountCache();
-      const accountIds = resolveAccountIdsFromName(
+      const { params, clientFilters } = buildEntriesApiParams(
+        sectionId,
+        startDate,
+        endDate,
+        limit,
         accountCache,
-        args.account_ids,
-        args.account_name
+        args
       );
+      const results = await fetchEntriesPage(client, params);
 
       const text = formatEntries(
-        filterEntries(results as Parameters<typeof formatEntries>[0], {
-          account_ids: accountIds,
-          l_account_id: args.l_account_id,
-          r_account_id: args.r_account_id,
-          min_money: args.min_money,
-          max_money: args.max_money,
-          item_contains: args.item_contains,
-          memo_contains: args.memo_contains,
-          query: args.query,
-          keywords: args.keywords,
-        }),
+        filterEntries(results, clientFilters),
         accountCache
       );
       return { content: [{ type: "text", text }] };
@@ -236,36 +482,31 @@ export function createWhooingMcpServer(client: WhooingClient): McpServer {
       const startDate = normalizeDate(args.start_date ?? defaults.startDate);
       const endDate = normalizeDate(args.end_date ?? defaults.endDate);
       const sectionId = args.section_id ?? client.defaultSectionId;
-      const limit = args.limit ?? 100;
 
       await client.loadAccounts(sectionId);
-      const results = await client.apiGet("entries.json", {
-        section_id: sectionId,
-        start_date: startDate,
-        end_date: endDate,
-        limit: String(limit),
-      });
-
       const accountCache = client.getAccountCache();
-      const accountIds = resolveAccountIdsFromName(
+      const queryResult = await searchEntriesEfficiently(
+        client,
+        sectionId,
+        startDate,
+        endDate,
         accountCache,
-        args.account_ids,
-        args.account_name
+        args
       );
-      const filtered = filterEntries(results as Parameters<typeof formatEntries>[0], {
-        account_ids: accountIds,
-        l_account_id: args.l_account_id,
-        r_account_id: args.r_account_id,
-        min_money: args.min_money,
-        max_money: args.max_money,
-        item_contains: args.item_contains,
-        memo_contains: args.memo_contains,
-        query: args.query,
-        keywords: args.keywords,
-      });
+      const displayResults =
+        args.limit !== undefined
+          ? { rows: (queryResult.results.rows ?? []).slice(0, args.limit) }
+          : queryResult.results;
 
-      const text = `## 거래 검색 결과 (${startDate} ~ ${endDate})\n\n` +
-        formatEntries(filtered, accountCache);
+      const text =
+        `## 거래 검색 결과 (${startDate} ~ ${endDate})\n\n` +
+        `- API 페이지: ${queryResult.pagesFetched}회\n` +
+        `- 원본 조회: ${queryResult.fetchedRows}건\n` +
+        `- 필터 후: ${queryResult.results.rows?.length ?? 0}건` +
+        (args.limit !== undefined ? `\n- 표시: ${displayResults.rows?.length ?? 0}건` : "") +
+        (queryResult.stoppedByMaxPages ? "\n- 참고: max_pages에 도달해 검색이 중단되었습니다." : "") +
+        `\n\n` +
+        formatEntries(displayResults, accountCache);
       return { content: [{ type: "text", text }] };
     }
   );
@@ -339,19 +580,26 @@ export function createWhooingMcpServer(client: WhooingClient): McpServer {
       const startDate = normalizeDate(args.start_date ?? defaults.startDate);
       const endDate = normalizeDate(args.end_date ?? defaults.endDate);
       const sectionId = args.section_id ?? client.defaultSectionId;
-      const limit = args.limit ?? 500;
 
       await client.loadAccounts(sectionId);
-      const results = await client.apiGet("entries.json", {
-        section_id: sectionId,
-        start_date: startDate,
-        end_date: endDate,
-        limit: String(limit),
-      });
+      const accountCache = client.getAccountCache();
+      const queryResult = await fetchEntriesPaginated(
+        client,
+        sectionId,
+        startDate,
+        endDate,
+        accountCache,
+        {
+          limit: args.limit,
+          page_limit: Math.min(args.limit ?? 100, 100),
+          max_pages: Math.ceil((args.limit ?? 500) / Math.min(args.limit ?? 100, 100)),
+        },
+        { pageLimit: 100, maxPages: 5 }
+      );
 
       const text = formatDuplicateCandidates(
-        results as Parameters<typeof formatDuplicateCandidates>[0],
-        client.getAccountCache(),
+        queryResult.results,
+        accountCache,
         {
           include_memo: args.include_memo,
           min_group_size: args.min_group_size,
@@ -484,6 +732,20 @@ export function createWhooingMcpServer(client: WhooingClient): McpServer {
           .max(100)
           .optional()
           .describe("Max number of recent entries to show. Defaults to 20."),
+        page_limit: z
+          .number()
+          .int()
+          .min(1)
+          .max(100)
+          .optional()
+          .describe("Entries API page size for paginated account lookup. Defaults to 100."),
+        max_pages: z
+          .number()
+          .int()
+          .min(1)
+          .max(100)
+          .optional()
+          .describe("Maximum pages to fetch for account lookup. Defaults to 10."),
       },
       annotations: { readOnlyHint: true },
     },
@@ -492,7 +754,6 @@ export function createWhooingMcpServer(client: WhooingClient): McpServer {
       const startDate = normalizeDate(args.start_date ?? defaults.startDate);
       const endDate = normalizeDate(args.end_date ?? defaults.endDate);
       const sectionId = args.section_id ?? client.defaultSectionId;
-      const limit = args.limit ?? 100;
       const recentLimit = args.recent_limit ?? 20;
 
       await client.loadAccounts(sectionId);
@@ -511,15 +772,23 @@ export function createWhooingMcpServer(client: WhooingClient): McpServer {
         };
       }
 
-      const results = await client.apiGet("entries.json", {
-        section_id: sectionId,
-        start_date: startDate,
-        end_date: endDate,
-        limit: String(limit),
-      });
-      const filtered = filterEntries(results as Parameters<typeof formatEntries>[0], {
-        account_ids: [accountId],
-      });
+      const queryResult = await fetchEntriesPaginated(
+        client,
+        sectionId,
+        startDate,
+        endDate,
+        accountCache,
+        {
+          account_ids: [accountId],
+          page_limit: args.page_limit,
+          max_pages: args.max_pages,
+        },
+        { pageLimit: 100, maxPages: 10 }
+      );
+      const filtered =
+        args.limit !== undefined
+          ? { rows: (queryResult.results.rows ?? []).slice(0, args.limit) }
+          : queryResult.results;
 
       const text = formatAccountActivity(filtered, accountId, accountCache, recentLimit);
       return { content: [{ type: "text", text }] };
