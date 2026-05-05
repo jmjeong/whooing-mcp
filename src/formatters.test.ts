@@ -3,6 +3,11 @@ import {
   formatPL,
   formatEntries,
   filterEntries,
+  formatEntryDetail,
+  formatMonthlySummary,
+  findDuplicateCandidates,
+  formatDuplicateCandidates,
+  formatAccountActivity,
   formatBalance,
   formatAccounts,
   formatSections,
@@ -227,6 +232,37 @@ describe("formatEntries", () => {
   });
 });
 
+describe("formatEntryDetail", () => {
+  const accounts = makeAccounts([
+    ["x12", "식비", "expenses"],
+    ["x5", "신한카드", "assets"],
+  ]);
+
+  it("formats a single entry", () => {
+    const text = formatEntryDetail(
+      {
+        entry_id: 12345,
+        entry_date: "20260415.0001",
+        l_account: "expenses",
+        l_account_id: "x12",
+        r_account: "assets",
+        r_account_id: "x5",
+        item: "점심",
+        money: 12000,
+        memo: "김밥천국",
+      },
+      accounts
+    );
+
+    expect(text).toContain("거래 상세 (id:12345)");
+    expect(text).toContain("날짜: 2026-04-15");
+    expect(text).toContain("항목: 점심");
+    expect(text).toContain("금액: 12,000원");
+    expect(text).toContain("식비");
+    expect(text).toContain("김밥천국");
+  });
+});
+
 describe("filterEntries", () => {
   const results = {
     rows: [
@@ -288,6 +324,155 @@ describe("filterEntries", () => {
 
     expect(filtered.rows).toHaveLength(1);
     expect(filtered.rows?.[0]?.entry_id).toBe(3);
+  });
+
+  it("filters by amount range", () => {
+    const filtered = filterEntries(results, {
+      min_money: 12000,
+      max_money: 21600,
+    });
+
+    expect(filtered.rows?.map((row) => row.entry_id)).toEqual([1, 2]);
+  });
+});
+
+describe("formatMonthlySummary", () => {
+  it("formats month-by-month summaries from calendar rows", () => {
+    const text = formatMonthlySummary({
+      rows: {
+        "202604": [
+          { date: "20260401", day: 3, count: 2, income: 0, expenses: 50000, etc: 0 },
+          { date: "20260410", day: 5, count: 1, income: 3000000, expenses: 0, etc: 0 },
+        ],
+        "202605": [
+          { date: "20260501", day: 5, count: 1, income: 0, expenses: 15000, etc: 0 },
+        ],
+      },
+    });
+
+    expect(text).toContain("월별 요약");
+    expect(text).toContain("2026-04");
+    expect(text).toContain("수입 3,000,000원");
+    expect(text).toContain("지출 50,000원");
+    expect(text).toContain("순액 2,950,000원");
+    expect(text).toContain("3건");
+    expect(text).toContain("2026-05");
+  });
+});
+
+describe("duplicate candidates", () => {
+  const accounts = makeAccounts([
+    ["x12", "식비", "expenses"],
+    ["x5", "신한카드", "assets"],
+  ]);
+
+  const results = {
+    rows: [
+      {
+        entry_id: 1,
+        entry_date: "20260415.0001",
+        l_account: "expenses",
+        l_account_id: "x12",
+        r_account: "assets",
+        r_account_id: "x5",
+        item: "점심",
+        money: 12000,
+        memo: "A",
+      },
+      {
+        entry_id: 2,
+        entry_date: "20260415.0002",
+        l_account: "expenses",
+        l_account_id: "x12",
+        r_account: "assets",
+        r_account_id: "x5",
+        item: "점심",
+        money: 12000,
+        memo: "B",
+      },
+      {
+        entry_id: 3,
+        entry_date: "20260416.0001",
+        l_account: "expenses",
+        l_account_id: "x12",
+        r_account: "assets",
+        r_account_id: "x5",
+        item: "점심",
+        money: 12000,
+        memo: "A",
+      },
+    ],
+  };
+
+  it("finds duplicate groups ignoring memo by default", () => {
+    const groups = findDuplicateCandidates(results);
+
+    expect(groups).toHaveLength(1);
+    expect(groups[0]?.map((row) => row.entry_id)).toEqual([1, 2]);
+  });
+
+  it("can include memo in duplicate grouping", () => {
+    const groups = findDuplicateCandidates(results, { include_memo: true });
+
+    expect(groups).toHaveLength(0);
+  });
+
+  it("formats duplicate groups", () => {
+    const text = formatDuplicateCandidates(results, accounts);
+
+    expect(text).toContain("중복 의심 거래 (1그룹)");
+    expect(text).toContain("2026-04-15 점심 12,000원");
+    expect(text).toContain("식비 ← 신한카드");
+    expect(text).toContain("id:1");
+    expect(text).toContain("id:2");
+  });
+});
+
+describe("formatAccountActivity", () => {
+  const accounts = makeAccounts([
+    ["x12", "식비", "expenses"],
+    ["x5", "신한카드", "assets"],
+    ["x1", "현금", "assets"],
+  ]);
+
+  it("summarizes one account activity", () => {
+    const text = formatAccountActivity(
+      {
+        rows: [
+          {
+            entry_id: 1,
+            entry_date: "20260415.0001",
+            l_account: "expenses",
+            l_account_id: "x12",
+            r_account: "assets",
+            r_account_id: "x5",
+            item: "점심",
+            money: 12000,
+            memo: "김밥천국",
+          },
+          {
+            entry_id: 2,
+            entry_date: "20260416.0001",
+            l_account: "expenses",
+            l_account_id: "x12",
+            r_account: "assets",
+            r_account_id: "x1",
+            item: "점심",
+            money: 9000,
+            memo: "",
+          },
+        ],
+      },
+      "x12",
+      accounts
+    );
+
+    expect(text).toContain("계정 활동: 식비 (x12)");
+    expect(text).toContain("거래 수: 2건");
+    expect(text).toContain("왼쪽 계정으로 기록: 2건, 21,000원");
+    expect(text).toContain("점심: 2건, 21,000원");
+    expect(text).toContain("id:1");
+    expect(text).toContain("김밥천국");
   });
 });
 

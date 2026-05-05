@@ -89,6 +89,8 @@ export interface EntryFilterOptions {
   account_ids?: string[];
   l_account_id?: string;
   r_account_id?: string;
+  min_money?: number;
+  max_money?: number;
   item_contains?: string;
   memo_contains?: string;
   query?: string;
@@ -121,6 +123,12 @@ export function filterEntries(
       !filters.account_ids.includes(row.l_account_id) &&
       !filters.account_ids.includes(row.r_account_id)
     ) {
+      return false;
+    }
+    if (filters.min_money !== undefined && row.money < filters.min_money) {
+      return false;
+    }
+    if (filters.max_money !== undefined && row.money > filters.max_money) {
       return false;
     }
     if (
@@ -170,6 +178,211 @@ export function formatEntries(
     const memo = row.memo ? ` — ${row.memo}` : "";
     lines.push(
       `- **${date}** ${item} ${formatAmount(row.money)} [${lName} ← ${rName}]${memo} (id:${row.entry_id})`
+    );
+  }
+
+  return lines.join("\n");
+}
+
+export function formatEntryDetail(
+  entry: EntryItem,
+  accounts: Map<string, AccountInfo>
+): string {
+  const lName = accounts.get(entry.l_account_id)?.name ?? entry.l_account_id;
+  const rName = accounts.get(entry.r_account_id)?.name ?? entry.r_account_id;
+  const item = entry.item || "(항목 없음)";
+  const memo = entry.memo ? `\n- 메모: ${entry.memo}` : "";
+
+  return [
+    `## 거래 상세 (id:${entry.entry_id})`,
+    "",
+    `- 날짜: ${formatDate(String(entry.entry_date))}`,
+    `- 항목: ${item}`,
+    `- 금액: ${formatAmount(Number(entry.money))}`,
+    `- 왼쪽 계정: ${lName} (${entry.l_account_id}, ${entry.l_account})`,
+    `- 오른쪽 계정: ${rName} (${entry.r_account_id}, ${entry.r_account})`,
+    memo,
+  ]
+    .filter((line) => line !== "")
+    .join("\n");
+}
+
+export interface MonthlySummary {
+  month: string;
+  income: number;
+  expenses: number;
+  etc: number;
+  count: number;
+}
+
+export function summarizeCalendarByMonth(results: CalendarResults): MonthlySummary[] {
+  const rows = results.rows ?? {};
+  return Object.keys(rows)
+    .sort()
+    .map((month) => {
+      const days = rows[month] ?? [];
+      return {
+        month,
+        income: days.reduce((sum, day) => sum + Number(day.income ?? 0), 0),
+        expenses: days.reduce((sum, day) => sum + Number(day.expenses ?? 0), 0),
+        etc: days.reduce((sum, day) => sum + Number(day.etc ?? 0), 0),
+        count: days.reduce((sum, day) => sum + Number(day.count ?? 0), 0),
+      };
+    });
+}
+
+export function formatMonthlySummary(results: CalendarResults): string {
+  const summaries = summarizeCalendarByMonth(results).filter(
+    (item) => item.count > 0 || item.income !== 0 || item.expenses !== 0 || item.etc !== 0
+  );
+
+  if (summaries.length === 0) {
+    return "해당 기간에 월별 요약 데이터가 없습니다.";
+  }
+
+  const lines: string[] = [];
+  lines.push("## 월별 요약");
+  lines.push("");
+
+  for (const item of summaries) {
+    const net = item.income - item.expenses + item.etc;
+    lines.push(
+      `- ${item.month.slice(0, 4)}-${item.month.slice(4, 6)}: ` +
+        `수입 ${formatAmount(item.income)}, ` +
+        `지출 ${formatAmount(item.expenses)}, ` +
+        `순액 ${formatAmount(net)}, ` +
+        `${item.count}건`
+    );
+  }
+
+  return lines.join("\n");
+}
+
+export interface DuplicateCandidateOptions {
+  include_memo?: boolean;
+  min_group_size?: number;
+}
+
+export function findDuplicateCandidates(
+  results: EntryResults,
+  options: DuplicateCandidateOptions = {}
+): EntryItem[][] {
+  const includeMemo = options.include_memo ?? false;
+  const minGroupSize = options.min_group_size ?? 2;
+  const groups = new Map<string, EntryItem[]>();
+
+  for (const row of results.rows ?? []) {
+    const parts = [
+      String(row.entry_date).split(".")[0],
+      String(row.money),
+      row.l_account_id,
+      row.r_account_id,
+      row.item.trim().toLocaleLowerCase(),
+    ];
+    if (includeMemo) {
+      parts.push((row.memo ?? "").trim().toLocaleLowerCase());
+    }
+
+    const key = parts.join("\u0000");
+    groups.set(key, [...(groups.get(key) ?? []), row]);
+  }
+
+  return [...groups.values()]
+    .filter((group) => group.length >= minGroupSize)
+    .sort((a, b) => b.length - a.length || String(a[0]?.entry_date).localeCompare(String(b[0]?.entry_date)));
+}
+
+export function formatDuplicateCandidates(
+  results: EntryResults,
+  accounts: Map<string, AccountInfo>,
+  options: DuplicateCandidateOptions = {}
+): string {
+  const groups = findDuplicateCandidates(results, options);
+  if (groups.length === 0) {
+    return "중복 의심 거래가 없습니다.";
+  }
+
+  const lines: string[] = [];
+  lines.push(`## 중복 의심 거래 (${groups.length}그룹)`);
+  lines.push("");
+
+  for (const group of groups) {
+    const first = group[0];
+    if (!first) continue;
+    const lName = accounts.get(first.l_account_id)?.name ?? first.l_account_id;
+    const rName = accounts.get(first.r_account_id)?.name ?? first.r_account_id;
+    lines.push(
+      `### ${formatDate(String(first.entry_date))} ${first.item || "(항목 없음)"} ` +
+        `${formatAmount(Number(first.money))} [${lName} ← ${rName}]`
+    );
+    for (const row of group) {
+      const memo = row.memo ? ` — ${row.memo}` : "";
+      lines.push(`- id:${row.entry_id}${memo}`);
+    }
+    lines.push("");
+  }
+
+  return lines.join("\n");
+}
+
+export function formatAccountActivity(
+  results: EntryResults,
+  accountId: string,
+  accounts: Map<string, AccountInfo>,
+  limit = 20
+): string {
+  const rows = (results.rows ?? []).filter(
+    (row) => row.l_account_id === accountId || row.r_account_id === accountId
+  );
+  const accountName = accounts.get(accountId)?.name ?? accountId;
+
+  if (rows.length === 0) {
+    return `${accountName} 계정의 거래 내역이 없습니다.`;
+  }
+
+  const asLeft = rows.filter((row) => row.l_account_id === accountId);
+  const asRight = rows.filter((row) => row.r_account_id === accountId);
+  const leftTotal = asLeft.reduce((sum, row) => sum + Number(row.money), 0);
+  const rightTotal = asRight.reduce((sum, row) => sum + Number(row.money), 0);
+  const itemTotals = new Map<string, { count: number; total: number }>();
+
+  for (const row of rows) {
+    const key = row.item || "(항목 없음)";
+    const current = itemTotals.get(key) ?? { count: 0, total: 0 };
+    itemTotals.set(key, {
+      count: current.count + 1,
+      total: current.total + Number(row.money),
+    });
+  }
+
+  const topItems = [...itemTotals.entries()]
+    .sort((a, b) => b[1].total - a[1].total || b[1].count - a[1].count)
+    .slice(0, 5);
+
+  const lines: string[] = [];
+  lines.push(`## 계정 활동: ${accountName} (${accountId})`);
+  lines.push("");
+  lines.push(`- 거래 수: ${rows.length}건`);
+  lines.push(`- 왼쪽 계정으로 기록: ${asLeft.length}건, ${formatAmount(leftTotal)}`);
+  lines.push(`- 오른쪽 계정으로 기록: ${asRight.length}건, ${formatAmount(rightTotal)}`);
+  lines.push("");
+
+  if (topItems.length > 0) {
+    lines.push("### 많이 나온 항목");
+    for (const [item, summary] of topItems) {
+      lines.push(`- ${item}: ${summary.count}건, ${formatAmount(summary.total)}`);
+    }
+    lines.push("");
+  }
+
+  lines.push("### 최근 거래");
+  for (const row of rows.slice(0, limit)) {
+    const lName = accounts.get(row.l_account_id)?.name ?? row.l_account_id;
+    const rName = accounts.get(row.r_account_id)?.name ?? row.r_account_id;
+    const memo = row.memo ? ` — ${row.memo}` : "";
+    lines.push(
+      `- **${formatDate(String(row.entry_date))}** ${row.item || "(항목 없음)"} ` +
+        `${formatAmount(Number(row.money))} [${lName} ← ${rName}]${memo} (id:${row.entry_id})`
     );
   }
 
