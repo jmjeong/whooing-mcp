@@ -115,6 +115,13 @@ const entryFilterSchema = {
     .max(100)
     .optional()
     .describe("Maximum pages to fetch when paginating with the entries max cursor."),
+  max_api_calls: z
+    .number()
+    .int()
+    .min(1)
+    .max(100)
+    .optional()
+    .describe("Maximum Whooing API calls this tool may make. Defaults to 20."),
 };
 
 function resolveAccountIdsFromName(
@@ -145,6 +152,7 @@ interface EntryQueryArgs {
   limit?: number;
   page_limit?: number;
   max_pages?: number;
+  max_api_calls?: number;
   account_ids?: string[];
   account_name?: string;
   l_account_id?: string;
@@ -162,6 +170,77 @@ interface EntryQueryResult {
   fetchedRows: number;
   pagesFetched: number;
   stoppedByMaxPages: boolean;
+}
+
+interface ApiBudget {
+  maxCalls: number;
+  calls: number;
+}
+
+function createApiBudget(maxCalls = 20): ApiBudget {
+  return { maxCalls, calls: 0 };
+}
+
+function noteApiCall(budget: ApiBudget): void {
+  budget.calls++;
+  if (budget.calls > budget.maxCalls) {
+    throw new Error(
+      `API request budget exceeded (${budget.maxCalls}). Narrow filters or raise max_api_calls.`
+    );
+  }
+}
+
+function formatUnknownRows(value: unknown, limit = 10): string[] {
+  if (Array.isArray(value)) {
+    return value.slice(0, limit).map((item) => `- ${JSON.stringify(item)}`);
+  }
+  if (value && typeof value === "object") {
+    return Object.entries(value)
+      .slice(0, limit)
+      .map(([key, item]) => `- ${key}: ${JSON.stringify(item)}`);
+  }
+  return [`- ${JSON.stringify(value)}`];
+}
+
+function formatDedicatedAccountSummary(
+  title: string,
+  results: unknown
+): string {
+  const lines: string[] = [];
+  lines.push(`### ${title}`);
+
+  if (!results || typeof results !== "object") {
+    lines.push(...formatUnknownRows(results));
+    return lines.join("\n");
+  }
+
+  const record = results as Record<string, unknown>;
+  if (record.aggregate && typeof record.aggregate === "object") {
+    lines.push(`- aggregate: ${JSON.stringify(record.aggregate)}`);
+  }
+  if (record.rows !== undefined) {
+    lines.push(...formatUnknownRows(record.rows));
+  } else {
+    lines.push(...formatUnknownRows(record));
+  }
+
+  return lines.join("\n");
+}
+
+async function tryAccountSummaryApi(
+  client: WhooingClient,
+  endpoint: string,
+  params: Record<string, string>,
+  title: string,
+  budget: ApiBudget
+): Promise<string> {
+  try {
+    noteApiCall(budget);
+    const results = await client.apiGet(endpoint, params);
+    return formatDedicatedAccountSummary(title, results);
+  } catch (error) {
+    return `### ${title}\n- unavailable: ${error instanceof Error ? error.message : String(error)}`;
+  }
 }
 
 function buildEntriesApiParams(
@@ -249,8 +328,12 @@ function buildEntriesApiParams(
 
 async function fetchEntriesPage(
   client: WhooingClient,
-  params: Record<string, string>
+  params: Record<string, string>,
+  budget?: ApiBudget
 ): Promise<EntryResults> {
+  if (budget) {
+    noteApiCall(budget);
+  }
   return (await client.apiGet("entries.json", params)) as EntryResults;
 }
 
@@ -261,7 +344,8 @@ async function fetchEntriesPaginated(
   endDate: string,
   accountCache: Map<string, { name: string; type: string }>,
   args: EntryQueryArgs,
-  defaults: { pageLimit: number; maxPages: number }
+  defaults: { pageLimit: number; maxPages: number },
+  budget: ApiBudget
 ): Promise<EntryQueryResult> {
   const pageLimit = args.page_limit ?? defaults.pageLimit;
   const maxPages = args.max_pages ?? defaults.maxPages;
@@ -280,7 +364,7 @@ async function fetchEntriesPaginated(
       args,
       maxCursor
     );
-    const pageResults = await fetchEntriesPage(client, params);
+    const pageResults = await fetchEntriesPage(client, params, budget);
     const pageRows = pageResults.rows ?? [];
     pagesFetched++;
 
@@ -344,6 +428,26 @@ async function searchEntriesEfficiently(
   accountCache: Map<string, { name: string; type: string }>,
   args: EntryQueryArgs
 ): Promise<EntryQueryResult> {
+  return searchEntriesEfficientlyWithBudget(
+    client,
+    sectionId,
+    startDate,
+    endDate,
+    accountCache,
+    args,
+    createApiBudget(args.max_api_calls ?? 20)
+  );
+}
+
+async function searchEntriesEfficientlyWithBudget(
+  client: WhooingClient,
+  sectionId: string,
+  startDate: string,
+  endDate: string,
+  accountCache: Map<string, { name: string; type: string }>,
+  args: EntryQueryArgs,
+  budget: ApiBudget
+): Promise<EntryQueryResult> {
   const accountIds = resolveAccountIdsFromName(
     accountCache,
     args.account_ids,
@@ -353,7 +457,7 @@ async function searchEntriesEfficiently(
     const perAccountResults: EntryQueryResult[] = [];
     for (const accountId of accountIds) {
       perAccountResults.push(
-        await searchEntriesEfficiently(
+        await searchEntriesEfficientlyWithBudget(
           client,
           sectionId,
           startDate,
@@ -363,7 +467,8 @@ async function searchEntriesEfficiently(
             ...args,
             account_ids: [accountId],
             account_name: undefined,
-          }
+          },
+          budget
         )
       );
     }
@@ -378,7 +483,8 @@ async function searchEntriesEfficiently(
       endDate,
       accountCache,
       { ...args, item_contains: args.query, query: undefined },
-      { pageLimit: 100, maxPages: 20 }
+      { pageLimit: 100, maxPages: 20 },
+      budget
     );
     const memoResults = await fetchEntriesPaginated(
       client,
@@ -387,7 +493,8 @@ async function searchEntriesEfficiently(
       endDate,
       accountCache,
       { ...args, memo_contains: args.query, query: undefined },
-      { pageLimit: 100, maxPages: 20 }
+      { pageLimit: 100, maxPages: 20 },
+      budget
     );
     return mergeEntryQueryResults([itemResults, memoResults]);
   }
@@ -399,7 +506,8 @@ async function searchEntriesEfficiently(
     endDate,
     accountCache,
     args,
-    { pageLimit: 100, maxPages: 20 }
+    { pageLimit: 100, maxPages: 20 },
+    budget
   );
 }
 
@@ -407,7 +515,7 @@ export function createWhooingMcpServer(client: WhooingClient): McpServer {
   const server = new McpServer(
     {
       name: "whooing-mcp",
-      version: "0.3.7",
+      version: "0.3.8",
     },
     {
       instructions:
@@ -481,7 +589,7 @@ export function createWhooingMcpServer(client: WhooingClient): McpServer {
         accountCache,
         args
       );
-      const results = await fetchEntriesPage(client, params);
+      const results = await fetchEntriesPage(client, params, createApiBudget(1));
 
       const text = formatEntries(
         filterEntries(results, clientFilters),
@@ -761,6 +869,13 @@ export function createWhooingMcpServer(client: WhooingClient): McpServer {
           .max(100)
           .optional()
           .describe("Maximum pages to fetch for account lookup. Defaults to 10."),
+        max_api_calls: z
+          .number()
+          .int()
+          .min(1)
+          .max(100)
+          .optional()
+          .describe("Maximum Whooing API calls this tool may make. Defaults to 12."),
       },
       annotations: { readOnlyHint: true },
     },
@@ -797,15 +912,54 @@ export function createWhooingMcpServer(client: WhooingClient): McpServer {
           account_ids: [accountId],
           page_limit: args.page_limit,
           max_pages: args.max_pages,
+          max_api_calls: args.max_api_calls,
         },
-        { pageLimit: 100, maxPages: 10 }
+        { pageLimit: 100, maxPages: 10 },
+        createApiBudget(args.max_api_calls ?? 12)
       );
       const filtered =
         args.limit !== undefined
           ? { rows: (queryResult.results.rows ?? []).slice(0, args.limit) }
           : queryResult.results;
 
-      const text = formatAccountActivity(filtered, accountId, accountCache, recentLimit);
+      const accountInfo = accountCache.get(accountId);
+      const summaryParams: Record<string, string> = {
+        section_id: sectionId,
+        start_date: startDate,
+        end_date: endDate,
+        account: accountInfo?.type ?? "",
+        account_id: accountId,
+      };
+      const budget = createApiBudget(args.max_api_calls ?? 12);
+      budget.calls = queryResult.pagesFetched;
+      const summaries = [
+        await tryAccountSummaryApi(
+          client,
+          "entries/changes_of_account_id.json",
+          summaryParams,
+          "일별 변동",
+          budget
+        ),
+        await tryAccountSummaryApi(
+          client,
+          "entries/items_of_account_id.json",
+          summaryParams,
+          "항목별 집계",
+          budget
+        ),
+        await tryAccountSummaryApi(
+          client,
+          "entries/clients_of_account_id.json",
+          summaryParams,
+          "거래처별 집계",
+          budget
+        ),
+      ];
+
+      const text =
+        formatAccountActivity(filtered, accountId, accountCache, recentLimit) +
+        "\n\n## 전용 집계 API\n\n" +
+        summaries.join("\n\n");
       return { content: [{ type: "text", text }] };
     }
   );
