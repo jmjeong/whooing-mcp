@@ -11,6 +11,7 @@ import {
   formatAccountActivity,
   formatAccountAggregateSummary,
   formatBalance,
+  formatBudget,
   formatAccounts,
   formatSections,
   formatFrequentItems,
@@ -238,6 +239,31 @@ describe("formatPL", () => {
 
     const text = formatPL(results, accounts, "20260401", "20260422");
     expect(text).toContain("손익");
+    expect(text).toContain("식비: 100,000원");
+    expect(text).toContain("급여: 3,000,000원");
+    expect(text).toContain("순이익: 2,850,000원");
+  });
+
+  it("normalizes object-map accounts and string amounts", () => {
+    const results = {
+      expenses: {
+        total: "150000",
+        accounts: {
+          x12: { money: "100000" },
+          x13: { money: "50000" },
+        },
+      },
+      income: {
+        total: "3000000",
+        accounts: {
+          x20: { money: "3000000" },
+        },
+      },
+      net_income: { total: "2850000" },
+    };
+
+    const text = formatPL(results, accounts, "20260401", "20260422");
+    expect(text).toContain("지출: 150,000원");
     expect(text).toContain("식비: 100,000원");
     expect(text).toContain("급여: 3,000,000원");
     expect(text).toContain("순이익: 2,850,000원");
@@ -613,6 +639,61 @@ describe("formatAccountAggregateSummary", () => {
 
     expect(text).toContain("식비 (x12): 금액: 21,000원");
     expect(text).toContain("신한카드 (x5): 금액: 9,000원");
+  });
+
+  it("does not format count/day metadata as money", () => {
+    const text = formatAccountAggregateSummary(
+      "일별 변동",
+      {
+        aggregate: { count: 3, money: "21000" },
+        rows: [{ date: "20260415", count: 2, day: 3, money: "12000" }],
+      },
+      accounts
+    );
+
+    expect(text).toContain("count: 3건");
+    expect(text).toContain("금액: 21,000원");
+    expect(text).toContain("2026-04-15: count: 2건, 금액: 12,000원");
+    expect(text).not.toContain("count: 3원");
+    expect(text).not.toContain("day: 3원");
+  });
+});
+
+describe("formatBalance", () => {
+  const accounts = makeAccounts([
+    ["x1", "현금", "assets"],
+    ["x2", "카드", "liabilities"],
+  ]);
+
+  it("normalizes object-map accounts and string amounts", () => {
+    const text = formatBalance(
+      {
+        assets: { total: "1234567", accounts: { x1: { money: "1234567" } } },
+        liabilities: { total: "50000", accounts: { x2: { money: "50000" } } },
+      },
+      accounts,
+      "20260401",
+      "20260430"
+    );
+
+    expect(text).toContain("자산: 1,234,567원");
+    expect(text).toContain("현금: 1,234,567원");
+    expect(text).toContain("부채: 50,000원");
+  });
+});
+
+describe("formatBudget", () => {
+  const accounts = makeAccounts([["x12", "식비", "expenses"]]);
+
+  it("normalizes object-map budget rows and string amounts", () => {
+    const text = formatBudget(
+      { expenses: { accounts: { x12: { budget: "300000", money: "120000" } } } },
+      accounts,
+      "20260401",
+      "20260430"
+    );
+
+    expect(text).toContain("식비: 120,000원 / 300,000원 (40%)");
   });
 });
 

@@ -207,6 +207,7 @@ interface EntryQueryArgs {
   keywords?: string[];
   sort_column?: "entry_date" | "item" | "money" | "total" | "l_account_id" | "r_account_id";
   sort_order?: "asc" | "desc";
+  disable_server_text_filters?: boolean;
 }
 
 interface EntryQueryResult {
@@ -329,14 +330,24 @@ function buildEntriesApiParams(
   if (args.item) {
     params.item = args.item;
     clientFilters.item_contains = undefined;
-  } else if (args.item_contains && !args.query && !args.keywords?.length) {
+  } else if (
+    args.item_contains &&
+    !args.query &&
+    !args.keywords?.length &&
+    !args.disable_server_text_filters
+  ) {
     params.item = wildcardContains(args.item_contains);
     clientFilters.item_contains = undefined;
   }
   if (args.memo) {
     params.memo = args.memo;
     clientFilters.memo_contains = undefined;
-  } else if (args.memo_contains && !args.query && !args.keywords?.length) {
+  } else if (
+    args.memo_contains &&
+    !args.query &&
+    !args.keywords?.length &&
+    !args.disable_server_text_filters
+  ) {
     params.memo = wildcardContains(args.memo_contains);
     clientFilters.memo_contains = undefined;
   }
@@ -371,6 +382,11 @@ async function fetchEntriesPaginated(
   let maxCursor: string | undefined;
   let pagesFetched = 0;
   let stoppedByMaxPages = false;
+  const usedServerTextFilter =
+    !args.disable_server_text_filters &&
+    !args.query &&
+    !args.keywords?.length &&
+    Boolean(args.item_contains || args.memo_contains);
 
   for (let page = 0; page < maxPages; page++) {
     const { params } = buildEntriesApiParams(
@@ -410,8 +426,26 @@ async function fetchEntriesPaginated(
     accountCache,
     args
   );
+  const filteredResults = filterEntries({ rows }, clientFilters);
+  if (usedServerTextFilter && rows.length === 0) {
+    const fallback = await fetchEntriesPaginated(
+      client,
+      sectionId,
+      startDate,
+      endDate,
+      accountCache,
+      { ...args, disable_server_text_filters: true },
+      defaults,
+      budget
+    );
+    return {
+      ...fallback,
+      pagesFetched: pagesFetched + fallback.pagesFetched,
+    };
+  }
+
   return {
-    results: filterEntries({ rows }, clientFilters),
+    results: filteredResults,
     fetchedRows: rows.length,
     pagesFetched,
     stoppedByMaxPages,

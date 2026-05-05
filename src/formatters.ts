@@ -1,23 +1,43 @@
 import type { AccountInfo } from "./whooing-client.js";
 
-function formatAmount(amount: number): string {
-  return amount.toLocaleString("ko-KR") + "원";
+function formatAmount(amount: number | string | null | undefined): string {
+  const numeric = Number(amount ?? 0);
+  if (!Number.isFinite(numeric)) {
+    return `${amount ?? 0}원`;
+  }
+  return numeric.toLocaleString("ko-KR") + "원";
 }
 
 interface AccountEntry {
   account_id: string;
-  money: number;
+  money: number | string;
 }
 
+type AccountEntryMapValue = Partial<AccountEntry> & { money: number | string };
+
 interface CategoryGroup {
-  total: number;
-  accounts: AccountEntry[];
+  total: number | string;
+  accounts: AccountEntry[] | Record<string, AccountEntryMapValue | number | string>;
+}
+
+function normalizeAccountEntries(
+  accounts: CategoryGroup["accounts"] | undefined
+): AccountEntry[] {
+  if (!accounts) return [];
+  if (Array.isArray(accounts)) return accounts;
+  return Object.entries(accounts).map(([accountId, value]): AccountEntry => {
+    if (value && typeof value === "object") {
+      const entry = value as Partial<AccountEntry>;
+      return { ...entry, account_id: entry.account_id ?? accountId } as AccountEntry;
+    }
+    return { account_id: accountId, money: value as number | string };
+  });
 }
 
 interface PLResults {
   expenses?: CategoryGroup;
   income?: CategoryGroup;
-  net_income?: { total: number };
+  net_income?: { total: number | string };
 }
 
 export function formatPL(
@@ -31,9 +51,9 @@ export function formatPL(
   lines.push("");
 
   // Expenses
-  const expenseAccounts = (results.expenses?.accounts ?? [])
-    .filter((item) => item.money > 0)
-    .sort((a, b) => b.money - a.money);
+  const expenseAccounts = normalizeAccountEntries(results.expenses?.accounts)
+    .filter((item) => Number(item.money) > 0)
+    .sort((a, b) => Number(b.money) - Number(a.money));
 
   if (expenseAccounts.length > 0) {
     lines.push(`### 지출: ${formatAmount(results.expenses?.total ?? 0)}`);
@@ -45,9 +65,9 @@ export function formatPL(
   }
 
   // Income
-  const incomeAccounts = (results.income?.accounts ?? [])
-    .filter((item) => item.money > 0)
-    .sort((a, b) => b.money - a.money);
+  const incomeAccounts = normalizeAccountEntries(results.income?.accounts)
+    .filter((item) => Number(item.money) > 0)
+    .sort((a, b) => Number(b.money) - Number(a.money));
 
   if (incomeAccounts.length > 0) {
     lines.push(`### 수입: ${formatAmount(results.income?.total ?? 0)}`);
@@ -99,7 +119,7 @@ export interface EntryFilterOptions {
 }
 
 export interface AccountAggregateResults {
-  aggregate?: Record<string, number>;
+  aggregate?: Record<string, number | string>;
   rows_type?: string;
   rows?: unknown;
 }
@@ -184,7 +204,7 @@ export function formatEntries(
     const item = row.item || "(항목 없음)";
     const memo = row.memo ? ` — ${row.memo}` : "";
     lines.push(
-      `- **${date}** ${item} ${formatAmount(row.money)} [${lName} ← ${rName}]${memo} (id:${row.entry_id})`
+      `- **${date}** ${item} ${formatAmount(Number(row.money))} [${lName} ← ${rName}]${memo} (id:${row.entry_id})`
     );
   }
 
@@ -436,13 +456,26 @@ export function formatAccountActivity(
   return lines.join("\n");
 }
 
-function formatAggregateValue(key: string, value: number): string {
+function isNumericLike(value: unknown): value is number | string {
+  if (typeof value === "number") return Number.isFinite(value);
+  return typeof value === "string" && value.trim() !== "" && Number.isFinite(Number(value));
+}
+
+function formatAggregateValue(key: string, value: number | string): string {
   const labels: Record<string, string> = {
     in: "유입",
     out: "유출",
     money: "금액",
     total: "합계",
   };
+  const countLabels = new Set(["count", "cnt"]);
+  const dateLabels = new Set(["day", "date", "month", "year"]);
+  if (countLabels.has(key)) {
+    return `${key}: ${Number(value).toLocaleString("ko-KR")}건`;
+  }
+  if (dateLabels.has(key)) {
+    return `${key}: ${String(value)}`;
+  }
   return `${labels[key] ?? key}: ${formatAmount(value)}`;
 }
 
@@ -474,8 +507,8 @@ function formatAggregateRows(rows: unknown, accounts: Map<string, AccountInfo>):
         : String(rawLabel);
 
     const amounts = Object.entries(row)
-      .filter(([, value]) => typeof value === "number")
-      .map(([key, value]) => formatAggregateValue(key, value as number));
+      .filter(([key, value]) => isNumericLike(value) && !["date", "day", "key"].includes(key))
+      .map(([key, value]) => formatAggregateValue(key, value as number | string));
 
     const formattedLabel = /^\d{8}(?:\.\d+)?$/.test(label) ? formatDate(label) : label;
     return `- ${formattedLabel}${amounts.length > 0 ? `: ${amounts.join(", ")}` : ""}`;
@@ -492,8 +525,8 @@ export function formatAccountAggregateSummary(
 
   const aggregate = results.aggregate ?? {};
   const aggregateText = Object.entries(aggregate)
-    .filter(([, value]) => typeof value === "number")
-    .map(([key, value]) => formatAggregateValue(key, value));
+    .filter(([, value]) => isNumericLike(value))
+    .map(([key, value]) => formatAggregateValue(key, value as number | string));
   if (aggregateText.length > 0) {
     lines.push(`- 합계: ${aggregateText.join(", ")}`);
   }
@@ -544,9 +577,9 @@ export function formatBalance(
   ];
 
   for (const [title, group] of sections) {
-    const filtered = (group?.accounts ?? [])
-      .filter((item) => item.money !== 0)
-      .sort((a, b) => Math.abs(b.money) - Math.abs(a.money));
+    const filtered = normalizeAccountEntries(group?.accounts)
+      .filter((item) => Number(item.money) !== 0)
+      .sort((a, b) => Math.abs(Number(b.money)) - Math.abs(Number(a.money)));
 
     if (filtered.length > 0) {
       lines.push(`### ${title}: ${formatAmount(group?.total ?? 0)}`);
@@ -563,14 +596,33 @@ export function formatBalance(
 
 interface BudgetItem {
   account_id: string;
-  budget: number;
-  money: number;
+  budget: number | string;
+  money: number | string;
 }
+
+type BudgetItemMapValue = Partial<BudgetItem> & {
+  budget: number | string;
+  money: number | string;
+};
 
 // Budget API returns either { expenses: { accounts: [...] } } or an empty array []
 type BudgetResults =
-  | { expenses?: { accounts: BudgetItem[] } }
+  | { expenses?: { accounts: BudgetItem[] | Record<string, BudgetItemMapValue | number | string> } }
   | BudgetItem[];
+
+function normalizeBudgetItems(
+  items: BudgetItem[] | Record<string, BudgetItemMapValue | number | string> | undefined
+): BudgetItem[] {
+  if (!items) return [];
+  if (Array.isArray(items)) return items;
+  return Object.entries(items).map(([accountId, value]): BudgetItem => {
+    if (value && typeof value === "object") {
+      const item = value as Partial<BudgetItem>;
+      return { ...item, account_id: item.account_id ?? accountId } as BudgetItem;
+    }
+    return { account_id: accountId, budget: value as number | string, money: 0 };
+  });
+}
 
 export function formatBudget(
   results: BudgetResults,
@@ -586,12 +638,12 @@ export function formatBudget(
   if (Array.isArray(results)) {
     // Empty array — no budgets
   } else if (results.expenses?.accounts) {
-    budgetItems = results.expenses.accounts;
+    budgetItems = normalizeBudgetItems(results.expenses.accounts);
   }
 
   const items = budgetItems
-    .filter((item) => item.budget > 0 || item.money > 0)
-    .sort((a, b) => b.money - a.money);
+    .filter((item) => Number(item.budget) > 0 || Number(item.money) > 0)
+    .sort((a, b) => Number(b.money) - Number(a.money));
 
   if (items.length === 0) {
     lines.push("설정된 예산이 없습니다.");
@@ -601,7 +653,7 @@ export function formatBudget(
   for (const item of items) {
     const name = accounts.get(item.account_id)?.name ?? item.account_id;
     const pct =
-      item.budget > 0 ? Math.round((item.money / item.budget) * 100) : 0;
+      Number(item.budget) > 0 ? Math.round((Number(item.money) / Number(item.budget)) * 100) : 0;
     const status = pct > 100 ? " (초과!)" : "";
     lines.push(
       `- ${name}: ${formatAmount(item.money)} / ${formatAmount(item.budget)} (${pct}%)${status}`
