@@ -69,7 +69,7 @@ export function formatPL(
   return lines.join("\n");
 }
 
-interface EntryItem {
+export interface EntryItem {
   entry_id: number;
   entry_date: string;
   l_account: string;
@@ -81,8 +81,72 @@ interface EntryItem {
   memo: string;
 }
 
-interface EntryResults {
+export interface EntryResults {
   rows?: EntryItem[];
+}
+
+export interface EntryFilterOptions {
+  account_ids?: string[];
+  l_account_id?: string;
+  r_account_id?: string;
+  item_contains?: string;
+  memo_contains?: string;
+  query?: string;
+  keywords?: string[];
+}
+
+function includesCaseInsensitive(value: string | undefined, needle: string): boolean {
+  return (value ?? "").toLocaleLowerCase().includes(needle.toLocaleLowerCase());
+}
+
+export function filterEntries(
+  results: EntryResults,
+  filters: EntryFilterOptions
+): EntryResults {
+  const rows = results.rows ?? [];
+  const keywords = [
+    ...(filters.query ? [filters.query] : []),
+    ...(filters.keywords ?? []),
+  ].filter((keyword) => keyword.trim().length > 0);
+
+  const filteredRows = rows.filter((row) => {
+    if (filters.l_account_id && row.l_account_id !== filters.l_account_id) {
+      return false;
+    }
+    if (filters.r_account_id && row.r_account_id !== filters.r_account_id) {
+      return false;
+    }
+    if (
+      filters.account_ids?.length &&
+      !filters.account_ids.includes(row.l_account_id) &&
+      !filters.account_ids.includes(row.r_account_id)
+    ) {
+      return false;
+    }
+    if (
+      filters.item_contains &&
+      !includesCaseInsensitive(row.item, filters.item_contains)
+    ) {
+      return false;
+    }
+    if (
+      filters.memo_contains &&
+      !includesCaseInsensitive(row.memo, filters.memo_contains)
+    ) {
+      return false;
+    }
+    if (
+      keywords.length > 0 &&
+      !keywords.some((keyword) =>
+        includesCaseInsensitive(`${row.item}\n${row.memo}`, keyword)
+      )
+    ) {
+      return false;
+    }
+    return true;
+  });
+
+  return { ...results, rows: filteredRows };
 }
 
 export function formatEntries(

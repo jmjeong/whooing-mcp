@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   formatPL,
   formatEntries,
+  filterEntries,
   formatBalance,
   formatAccounts,
   formatSections,
@@ -223,6 +224,70 @@ describe("formatEntries", () => {
   it("handles empty entries", () => {
     const text = formatEntries({ rows: [] }, accounts);
     expect(text).toContain("거래 내역이 없습니다");
+  });
+});
+
+describe("filterEntries", () => {
+  const results = {
+    rows: [
+      {
+        entry_id: 1,
+        entry_date: "20251114.0001",
+        l_account: "expenses",
+        l_account_id: "x45",
+        r_account: "assets",
+        r_account_id: "x38",
+        item: "Monster Train2(nintendo)",
+        money: 21600,
+        memo: "Switch deckbuilder",
+      },
+      {
+        entry_id: 2,
+        entry_date: "20251120.0001",
+        l_account: "expenses",
+        l_account_id: "x11",
+        r_account: "liabilities",
+        r_account_id: "x24",
+        item: "점심",
+        money: 12000,
+        memo: "",
+      },
+      {
+        entry_id: 3,
+        entry_date: "20251201.0001",
+        l_account: "expenses",
+        l_account_id: "x45",
+        r_account: "assets",
+        r_account_id: "x38",
+        item: "Ball X Pit",
+        money: 11880,
+        memo: "",
+      },
+    ],
+  };
+
+  it("filters by left account id", () => {
+    const filtered = filterEntries(results, { l_account_id: "x45" });
+
+    expect(filtered.rows).toHaveLength(2);
+    expect(filtered.rows?.map((row) => row.entry_id)).toEqual([1, 3]);
+  });
+
+  it("matches keywords case-insensitively across item and memo", () => {
+    const filtered = filterEntries(results, { keywords: ["switch"] });
+
+    expect(filtered.rows).toHaveLength(1);
+    expect(filtered.rows?.[0]?.entry_id).toBe(1);
+  });
+
+  it("combines account and keyword filters", () => {
+    const filtered = filterEntries(results, {
+      account_ids: ["x45"],
+      keywords: ["ball"],
+    });
+
+    expect(filtered.rows).toHaveLength(1);
+    expect(filtered.rows?.[0]?.entry_id).toBe(3);
   });
 });
 

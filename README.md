@@ -80,7 +80,7 @@ npx whooing-mcp --http --port 8182
 | Tool | Description | Parameters |
 |------|-------------|------------|
 | `whooing_pl` | Profit & loss (spending/income by category) | `start_date?`, `end_date?`, `section_id?` |
-| `whooing_entries` | Transaction list with account names | `start_date?`, `end_date?`, `limit?`, `section_id?` |
+| `whooing_entries` | Transaction list with account names; supports client-side filters | `start_date?`, `end_date?`, `limit?`, `account_ids?`, `account_name?`, `l_account_id?`, `r_account_id?`, `item_contains?`, `memo_contains?`, `query?`, `keywords?`, `section_id?` |
 | `whooing_balance` | Balance sheet (assets, liabilities, capital) | `start_date?`, `end_date?`, `section_id?` |
 | `whooing_accounts` | Full account list | `section_id?` |
 | `whooing_sections` | List all sections (가계부) | (none) |
@@ -93,6 +93,9 @@ npx whooing-mcp --http --port 8182
 
 - Dates use `YYYYMMDD` format. Default: current month (1st to today).
 - Calendar months use `YYYYMM` format. Default: current month.
+- `whooing_entries` filters are applied after fetching the date-range results from Whooing. Use a larger `limit` when searching busy periods.
+- `account_name` matches account titles case-insensitively, so `account_name: "Game"` can narrow results to a game expense category without looking up its account ID first.
+- `query` and `keywords` match against both `item` and `memo`; `item_contains` and `memo_contains` target one field.
 - `section_id` defaults to `WHOOING_SECTION_ID` env var.
 - Write tools resolve account types automatically from the account cache. Use `whooing_accounts` to look up account IDs first.
 
