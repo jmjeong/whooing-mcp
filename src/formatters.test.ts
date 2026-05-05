@@ -5,6 +5,7 @@ import {
   filterEntries,
   formatEntryDetail,
   formatMonthlySummary,
+  formatReportMonthlySummary,
   findDuplicateCandidates,
   formatDuplicateCandidates,
   formatAccountActivity,
@@ -357,6 +358,35 @@ describe("formatMonthlySummary", () => {
     expect(text).toContain("순액 2,950,000원");
     expect(text).toContain("3건");
     expect(text).toContain("2026-05");
+  });
+});
+
+describe("formatReportMonthlySummary", () => {
+  it("formats direct report_summary monthly rows", () => {
+    const text = formatReportMonthlySummary({
+      rows: {
+        "202604": {
+          date: "202604",
+          income: 3000000,
+          expenses: 50000,
+          net_income: 2950000,
+        },
+        "202605": {
+          date: "202605",
+          income: 0,
+          expenses: 15000,
+          net_income: -15000,
+        },
+      },
+    });
+
+    expect(text).toContain("월별 요약");
+    expect(text).toContain("2026-04");
+    expect(text).toContain("수입 3,000,000원");
+    expect(text).toContain("지출 50,000원");
+    expect(text).toContain("순이익 2,950,000원");
+    expect(text).toContain("2026-05");
+    expect(text).toContain("순이익 -15,000원");
   });
 });
 

@@ -8,7 +8,7 @@ import {
   formatEntries,
   filterEntries,
   formatEntryDetail,
-  formatMonthlySummary,
+  formatReportMonthlySummary,
   formatDuplicateCandidates,
   formatAccountActivity,
   formatBalance,
@@ -344,6 +344,32 @@ async function searchEntriesEfficiently(
   accountCache: Map<string, { name: string; type: string }>,
   args: EntryQueryArgs
 ): Promise<EntryQueryResult> {
+  const accountIds = resolveAccountIdsFromName(
+    accountCache,
+    args.account_ids,
+    args.account_name
+  );
+  if (accountIds && accountIds.length > 1) {
+    const perAccountResults: EntryQueryResult[] = [];
+    for (const accountId of accountIds) {
+      perAccountResults.push(
+        await searchEntriesEfficiently(
+          client,
+          sectionId,
+          startDate,
+          endDate,
+          accountCache,
+          {
+            ...args,
+            account_ids: [accountId],
+            account_name: undefined,
+          }
+        )
+      );
+    }
+    return mergeEntryQueryResults(perAccountResults);
+  }
+
   if (args.query && !args.item_contains && !args.memo_contains && !args.keywords?.length) {
     const itemResults = await fetchEntriesPaginated(
       client,
@@ -381,7 +407,7 @@ export function createWhooingMcpServer(client: WhooingClient): McpServer {
   const server = new McpServer(
     {
       name: "whooing-mcp",
-      version: "0.3.6",
+      version: "0.3.7",
     },
     {
       instructions:
@@ -554,13 +580,7 @@ export function createWhooingMcpServer(client: WhooingClient): McpServer {
         "Find likely duplicate transactions in a date range by grouping same date, amount, accounts, and item.",
       inputSchema: {
         ...dateRangeSchema,
-        limit: z
-          .number()
-          .int()
-          .min(1)
-          .max(500)
-          .optional()
-          .describe("Max number of entries to scan. Defaults to 500."),
+        ...entryFilterSchema,
         include_memo: z
           .boolean()
           .optional()
@@ -583,18 +603,13 @@ export function createWhooingMcpServer(client: WhooingClient): McpServer {
 
       await client.loadAccounts(sectionId);
       const accountCache = client.getAccountCache();
-      const queryResult = await fetchEntriesPaginated(
+      const queryResult = await searchEntriesEfficiently(
         client,
         sectionId,
         startDate,
         endDate,
         accountCache,
-        {
-          limit: args.limit,
-          page_limit: Math.min(args.limit ?? 100, 100),
-          max_pages: Math.ceil((args.limit ?? 500) / Math.min(args.limit ?? 100, 100)),
-        },
-        { pageLimit: 100, maxPages: 5 }
+        args
       );
 
       const text = formatDuplicateCandidates(
@@ -1221,14 +1236,16 @@ export function createWhooingMcpServer(client: WhooingClient): McpServer {
       const startMonth = args.start_month ?? currentMonth;
       const endMonth = args.end_month ?? currentMonth;
 
-      const results = await client.apiGet("calendar.json", {
+      const results = await client.apiGet("report_summary.json", {
         section_id: sectionId,
         start_date: startMonth,
         end_date: endMonth,
+        rows_type: "month",
+        account: "expenses,income",
       });
 
-      const text = formatMonthlySummary(
-        results as Parameters<typeof formatMonthlySummary>[0]
+      const text = formatReportMonthlySummary(
+        results as Parameters<typeof formatReportMonthlySummary>[0]
       );
       return { content: [{ type: "text", text }] };
     }

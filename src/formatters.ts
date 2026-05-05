@@ -258,6 +258,46 @@ export function formatMonthlySummary(results: CalendarResults): string {
   return lines.join("\n");
 }
 
+interface ReportSummaryRow {
+  date?: string;
+  income?: number;
+  expenses?: number;
+  net_income?: number;
+}
+
+interface ReportSummaryResults {
+  rows?: Record<string, ReportSummaryRow>;
+}
+
+export function formatReportMonthlySummary(results: ReportSummaryResults): string {
+  const rows = results.rows ?? {};
+  const months = Object.keys(rows).sort();
+
+  if (months.length === 0) {
+    return "해당 기간에 월별 요약 데이터가 없습니다.";
+  }
+
+  const lines: string[] = [];
+  lines.push("## 월별 요약");
+  lines.push("");
+
+  for (const month of months) {
+    const row = rows[month] ?? {};
+    const income = Number(row.income ?? 0);
+    const expenses = Number(row.expenses ?? 0);
+    const netIncome = Number(row.net_income ?? income - expenses);
+    const label = `${month.slice(0, 4)}-${month.slice(4, 6)}`;
+    lines.push(
+      `- ${label}: ` +
+        `수입 ${formatAmount(income)}, ` +
+        `지출 ${formatAmount(expenses)}, ` +
+        `순이익 ${formatAmount(netIncome)}`
+    );
+  }
+
+  return lines.join("\n");
+}
+
 export interface DuplicateCandidateOptions {
   include_memo?: boolean;
   min_group_size?: number;
