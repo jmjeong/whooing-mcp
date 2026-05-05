@@ -754,6 +754,7 @@ function normalizeCalendarDays(days: CalendarDayRows | undefined): CalendarDay[]
 
 export function formatCalendar(results: CalendarResults): string {
   const lines: string[] = [];
+  let hasDailyRows = false;
 
   const agg = results.aggregate;
   if (agg) {
@@ -790,8 +791,13 @@ export function formatCalendar(results: CalendarResults): string {
       if (Number(d.expenses) > 0) parts.push(`지출 ${formatAmount(Number(d.expenses))}`);
       if (Number(d.etc) > 0) parts.push(`기타 ${formatAmount(Number(d.etc))}`);
       lines.push(`- ${dateStr}(${dayName}) ${d.count}건: ${parts.join(", ")}`);
+      hasDailyRows = true;
     }
     lines.push("");
+  }
+
+  if (!hasDailyRows && !agg) {
+    lines.push("해당 기간에 데이터가 없습니다.");
   }
 
   return lines.join("\n");

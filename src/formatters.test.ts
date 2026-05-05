@@ -163,6 +163,25 @@ describe("formatCalendar", () => {
     expect(text).toContain("해당 기간에 데이터가 없습니다");
   });
 
+  it("handles months with only zero-count days", () => {
+    const text = formatCalendar({
+      rows: {
+        "202604": [
+          {
+            date: "20260402",
+            day: 4,
+            count: 0,
+            income: 0,
+            expenses: 0,
+            etc: 0,
+          },
+        ],
+      },
+    });
+
+    expect(text).toContain("해당 기간에 데이터가 없습니다");
+  });
+
   it("formats object-map calendar rows from Whooing API", () => {
     const text = formatCalendar({
       rows: {
