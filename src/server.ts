@@ -593,7 +593,7 @@ export function createWhooingMcpServer(client: WhooingClient): McpServer {
   const server = new McpServer(
     {
       name: "whooing-mcp",
-      version: "0.3.9",
+      version: "0.3.10",
     },
     {
       instructions:
