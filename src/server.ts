@@ -4,6 +4,7 @@ import type { WhooingClient } from "./whooing-client.js";
 import {
   formatPL,
   formatEntries,
+  filterEntries,
   formatBalance,
   formatAccounts,
   formatSections,
@@ -109,6 +110,38 @@ export function createWhooingMcpServer(client: WhooingClient): McpServer {
           .max(500)
           .optional()
           .describe("Max number of entries to return. Defaults to 20."),
+        account_ids: z
+          .array(z.string())
+          .optional()
+          .describe("Return entries where either side account ID is in this list."),
+        account_name: z
+          .string()
+          .optional()
+          .describe("Case-insensitive account name match, e.g. Game or 네이버페이."),
+        l_account_id: z
+          .string()
+          .optional()
+          .describe("Return entries with this left account ID (e.g. expense category)."),
+        r_account_id: z
+          .string()
+          .optional()
+          .describe("Return entries with this right account ID (e.g. payment account)."),
+        item_contains: z
+          .string()
+          .optional()
+          .describe("Case-insensitive substring match against the item field."),
+        memo_contains: z
+          .string()
+          .optional()
+          .describe("Case-insensitive substring match against the memo field."),
+        query: z
+          .string()
+          .optional()
+          .describe("Case-insensitive substring match against item or memo."),
+        keywords: z
+          .array(z.string())
+          .optional()
+          .describe("Any keyword to match case-insensitively against item or memo."),
       },
       annotations: { readOnlyHint: true },
     },
@@ -127,9 +160,28 @@ export function createWhooingMcpServer(client: WhooingClient): McpServer {
         limit: String(limit),
       });
 
+      const accountCache = client.getAccountCache();
+      const accountIds = [...(args.account_ids ?? [])];
+      if (args.account_name) {
+        const needle = args.account_name.toLocaleLowerCase();
+        for (const [id, info] of accountCache.entries()) {
+          if (info.name.toLocaleLowerCase().includes(needle)) {
+            accountIds.push(id);
+          }
+        }
+      }
+
       const text = formatEntries(
-        results as Parameters<typeof formatEntries>[0],
-        client.getAccountCache()
+        filterEntries(results as Parameters<typeof formatEntries>[0], {
+          account_ids: accountIds.length > 0 ? [...new Set(accountIds)] : undefined,
+          l_account_id: args.l_account_id,
+          r_account_id: args.r_account_id,
+          item_contains: args.item_contains,
+          memo_contains: args.memo_contains,
+          query: args.query,
+          keywords: args.keywords,
+        }),
+        accountCache
       );
       return { content: [{ type: "text", text }] };
     }
