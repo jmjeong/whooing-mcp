@@ -162,6 +162,36 @@ describe("formatCalendar", () => {
     const text = formatCalendar({ rows: {} });
     expect(text).toContain("해당 기간에 데이터가 없습니다");
   });
+
+  it("formats object-map calendar rows from Whooing API", () => {
+    const text = formatCalendar({
+      rows: {
+        "202604": {
+          "20260401": {
+            date: "20260401",
+            day: 3,
+            count: 2,
+            income: 0,
+            expenses: 50000,
+            etc: 0,
+          },
+          "20260402": {
+            date: "20260402",
+            day: 4,
+            count: 0,
+            income: 0,
+            expenses: 0,
+            etc: 0,
+          },
+        },
+      },
+    });
+
+    expect(text).toContain("2026-04");
+    expect(text).toContain("2026-04-01(수) 2건");
+    expect(text).toContain("지출 50,000원");
+    expect(text).not.toContain("2026-04-02");
+  });
 });
 
 describe("formatPL", () => {
@@ -359,6 +389,22 @@ describe("formatMonthlySummary", () => {
     expect(text).toContain("순액 2,950,000원");
     expect(text).toContain("3건");
     expect(text).toContain("2026-05");
+  });
+
+  it("summarizes object-map calendar rows", () => {
+    const text = formatMonthlySummary({
+      rows: {
+        "202604": {
+          "20260401": { date: "20260401", day: 3, count: 2, income: 0, expenses: 50000, etc: 0 },
+          "20260410": { date: "20260410", day: 5, count: 1, income: 3000000, expenses: 0, etc: 0 },
+        },
+      },
+    });
+
+    expect(text).toContain("2026-04");
+    expect(text).toContain("수입 3,000,000원");
+    expect(text).toContain("지출 50,000원");
+    expect(text).toContain("3건");
   });
 });
 

@@ -227,7 +227,7 @@ export function summarizeCalendarByMonth(results: CalendarResults): MonthlySumma
   return Object.keys(rows)
     .sort()
     .map((month) => {
-      const days = rows[month] ?? [];
+      const days = normalizeCalendarDays(rows[month]);
       return {
         month,
         income: days.reduce((sum, day) => sum + Number(day.income ?? 0), 0),
@@ -732,9 +732,24 @@ interface CalendarDay {
   etc: number;
 }
 
+type CalendarDayRows = CalendarDay[] | Record<string, CalendarDay>;
+
 interface CalendarResults {
   aggregate?: { income: number; expenses: number; etc: number };
-  rows?: Record<string, CalendarDay[]>;
+  rows?: Record<string, CalendarDayRows>;
+}
+
+function normalizeCalendarDays(days: CalendarDayRows | undefined): CalendarDay[] {
+  if (Array.isArray(days)) {
+    return days;
+  }
+  if (days && typeof days === "object") {
+    return Object.entries(days).map(([date, value]) => ({
+      ...value,
+      date: value.date ?? date,
+    }));
+  }
+  return [];
 }
 
 export function formatCalendar(results: CalendarResults): string {
@@ -760,18 +775,20 @@ export function formatCalendar(results: CalendarResults): string {
   const dayNames = ["일", "월", "화", "수", "목", "금", "토"];
 
   for (const month of months) {
-    const days = rows[month].filter((d) => d.count > 0);
+    const days = normalizeCalendarDays(rows[month]).filter(
+      (d) => Number(d.count ?? 0) > 0
+    );
     if (days.length === 0) continue;
 
     const label = `${month.slice(0, 4)}-${month.slice(4, 6)}`;
     lines.push(`### ${label}`);
     for (const d of days) {
       const dateStr = `${String(d.date).slice(0, 4)}-${String(d.date).slice(4, 6)}-${String(d.date).slice(6, 8)}`;
-      const dayName = dayNames[d.day] ?? "";
+      const dayName = dayNames[Number(d.day)] ?? "";
       const parts: string[] = [];
-      if (d.income > 0) parts.push(`수입 ${formatAmount(d.income)}`);
-      if (d.expenses > 0) parts.push(`지출 ${formatAmount(d.expenses)}`);
-      if (d.etc > 0) parts.push(`기타 ${formatAmount(d.etc)}`);
+      if (Number(d.income) > 0) parts.push(`수입 ${formatAmount(Number(d.income))}`);
+      if (Number(d.expenses) > 0) parts.push(`지출 ${formatAmount(Number(d.expenses))}`);
+      if (Number(d.etc) > 0) parts.push(`기타 ${formatAmount(Number(d.etc))}`);
       lines.push(`- ${dateStr}(${dayName}) ${d.count}건: ${parts.join(", ")}`);
     }
     lines.push("");
