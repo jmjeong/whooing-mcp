@@ -9,6 +9,7 @@ import {
   findDuplicateCandidates,
   formatDuplicateCandidates,
   formatAccountActivity,
+  formatAccountAggregateSummary,
   formatBalance,
   formatAccounts,
   formatSections,
@@ -503,6 +504,50 @@ describe("formatAccountActivity", () => {
     expect(text).toContain("점심: 2건, 21,000원");
     expect(text).toContain("id:1");
     expect(text).toContain("김밥천국");
+  });
+});
+
+describe("formatAccountAggregateSummary", () => {
+  const accounts = makeAccounts([
+    ["x12", "식비", "expenses"],
+    ["x5", "신한카드", "assets"],
+  ]);
+
+  it("formats daily account changes without JSON dumps", () => {
+    const text = formatAccountAggregateSummary(
+      "일별 변동",
+      {
+        aggregate: { in: 1010002, out: 298933 },
+        rows_type: "day",
+        rows: [
+          { date: "20260415", money: 12000 },
+          { date: "20260416", money: -3000 },
+        ],
+      },
+      accounts
+    );
+
+    expect(text).toContain("일별 변동");
+    expect(text).toContain("합계: 유입: 1,010,002원, 유출: 298,933원");
+    expect(text).toContain("단위: day");
+    expect(text).toContain("2026-04-15: 금액: 12,000원");
+    expect(text).not.toContain("{");
+  });
+
+  it("resolves account ids in keyed aggregate rows", () => {
+    const text = formatAccountAggregateSummary(
+      "항목별 집계",
+      {
+        rows: {
+          x12: { money: 21000 },
+          x5: { money: 9000 },
+        },
+      },
+      accounts
+    );
+
+    expect(text).toContain("식비 (x12): 금액: 21,000원");
+    expect(text).toContain("신한카드 (x5): 금액: 9,000원");
   });
 });
 
