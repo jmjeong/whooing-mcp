@@ -5,6 +5,10 @@ import {
   formatPL,
   formatEntries,
   filterEntries,
+  formatEntryDetail,
+  formatMonthlySummary,
+  formatDuplicateCandidates,
+  formatAccountActivity,
   formatBalance,
   formatAccounts,
   formatSections,
@@ -47,11 +51,78 @@ const dateRangeSchema = {
     .describe("Section ID. Defaults to WHOOING_SECTION_ID env var."),
 };
 
+const entryFilterSchema = {
+  limit: z
+    .number()
+    .int()
+    .min(1)
+    .max(500)
+    .optional()
+    .describe("Max number of entries to fetch."),
+  account_ids: z
+    .array(z.string())
+    .optional()
+    .describe("Return entries where either side account ID is in this list."),
+  account_name: z
+    .string()
+    .optional()
+    .describe("Case-insensitive account name match, e.g. Game or 네이버페이."),
+  l_account_id: z
+    .string()
+    .optional()
+    .describe("Return entries with this left account ID (e.g. expense category)."),
+  r_account_id: z
+    .string()
+    .optional()
+    .describe("Return entries with this right account ID (e.g. payment account)."),
+  min_money: z
+    .number()
+    .optional()
+    .describe("Return entries with amount greater than or equal to this value."),
+  max_money: z
+    .number()
+    .optional()
+    .describe("Return entries with amount less than or equal to this value."),
+  item_contains: z
+    .string()
+    .optional()
+    .describe("Case-insensitive substring match against the item field."),
+  memo_contains: z
+    .string()
+    .optional()
+    .describe("Case-insensitive substring match against the memo field."),
+  query: z
+    .string()
+    .optional()
+    .describe("Case-insensitive substring match against item or memo."),
+  keywords: z
+    .array(z.string())
+    .optional()
+    .describe("Any keyword to match case-insensitively against item or memo."),
+};
+
+function resolveAccountIdsFromName(
+  accountCache: Map<string, { name: string; type: string }>,
+  accountIds: string[] | undefined,
+  accountName: string | undefined
+): string[] | undefined {
+  const resolved = [...(accountIds ?? [])];
+  if (accountName) {
+    const needle = accountName.toLocaleLowerCase();
+    for (const [id, info] of accountCache.entries()) {
+      if (info.name.toLocaleLowerCase().includes(needle)) {
+        resolved.push(id);
+      }
+    }
+  }
+  return resolved.length > 0 ? [...new Set(resolved)] : undefined;
+}
+
 export function createWhooingMcpServer(client: WhooingClient): McpServer {
   const server = new McpServer(
     {
       name: "whooing-mcp",
-      version: "0.3.3",
+      version: "0.3.5",
     },
     {
       instructions:
@@ -104,45 +175,7 @@ export function createWhooingMcpServer(client: WhooingClient): McpServer {
         "Get transaction entries (individual transactions with account names) for a date range",
       inputSchema: {
         ...dateRangeSchema,
-        limit: z
-          .number()
-          .int()
-          .min(1)
-          .max(500)
-          .optional()
-          .describe("Max number of entries to return. Defaults to 20."),
-        account_ids: z
-          .array(z.string())
-          .optional()
-          .describe("Return entries where either side account ID is in this list."),
-        account_name: z
-          .string()
-          .optional()
-          .describe("Case-insensitive account name match, e.g. Game or 네이버페이."),
-        l_account_id: z
-          .string()
-          .optional()
-          .describe("Return entries with this left account ID (e.g. expense category)."),
-        r_account_id: z
-          .string()
-          .optional()
-          .describe("Return entries with this right account ID (e.g. payment account)."),
-        item_contains: z
-          .string()
-          .optional()
-          .describe("Case-insensitive substring match against the item field."),
-        memo_contains: z
-          .string()
-          .optional()
-          .describe("Case-insensitive substring match against the memo field."),
-        query: z
-          .string()
-          .optional()
-          .describe("Case-insensitive substring match against item or memo."),
-        keywords: z
-          .array(z.string())
-          .optional()
-          .describe("Any keyword to match case-insensitively against item or memo."),
+        ...entryFilterSchema,
       },
       annotations: { readOnlyHint: true },
     },
@@ -162,27 +195,167 @@ export function createWhooingMcpServer(client: WhooingClient): McpServer {
       });
 
       const accountCache = client.getAccountCache();
-      const accountIds = [...(args.account_ids ?? [])];
-      if (args.account_name) {
-        const needle = args.account_name.toLocaleLowerCase();
-        for (const [id, info] of accountCache.entries()) {
-          if (info.name.toLocaleLowerCase().includes(needle)) {
-            accountIds.push(id);
-          }
-        }
-      }
+      const accountIds = resolveAccountIdsFromName(
+        accountCache,
+        args.account_ids,
+        args.account_name
+      );
 
       const text = formatEntries(
         filterEntries(results as Parameters<typeof formatEntries>[0], {
-          account_ids: accountIds.length > 0 ? [...new Set(accountIds)] : undefined,
+          account_ids: accountIds,
           l_account_id: args.l_account_id,
           r_account_id: args.r_account_id,
+          min_money: args.min_money,
+          max_money: args.max_money,
           item_contains: args.item_contains,
           memo_contains: args.memo_contains,
           query: args.query,
           keywords: args.keywords,
         }),
         accountCache
+      );
+      return { content: [{ type: "text", text }] };
+    }
+  );
+
+  // whooing_search_entries — Search-focused transaction lookup
+  server.registerTool(
+    "whooing_search_entries",
+    {
+      description:
+        "Search transactions with query, account, amount, and date filters. Prefer this for natural-language find/search requests.",
+      inputSchema: {
+        ...dateRangeSchema,
+        ...entryFilterSchema,
+      },
+      annotations: { readOnlyHint: true },
+    },
+    async (args) => {
+      const defaults = getDateDefaults();
+      const startDate = normalizeDate(args.start_date ?? defaults.startDate);
+      const endDate = normalizeDate(args.end_date ?? defaults.endDate);
+      const sectionId = args.section_id ?? client.defaultSectionId;
+      const limit = args.limit ?? 100;
+
+      await client.loadAccounts(sectionId);
+      const results = await client.apiGet("entries.json", {
+        section_id: sectionId,
+        start_date: startDate,
+        end_date: endDate,
+        limit: String(limit),
+      });
+
+      const accountCache = client.getAccountCache();
+      const accountIds = resolveAccountIdsFromName(
+        accountCache,
+        args.account_ids,
+        args.account_name
+      );
+      const filtered = filterEntries(results as Parameters<typeof formatEntries>[0], {
+        account_ids: accountIds,
+        l_account_id: args.l_account_id,
+        r_account_id: args.r_account_id,
+        min_money: args.min_money,
+        max_money: args.max_money,
+        item_contains: args.item_contains,
+        memo_contains: args.memo_contains,
+        query: args.query,
+        keywords: args.keywords,
+      });
+
+      const text = `## 거래 검색 결과 (${startDate} ~ ${endDate})\n\n` +
+        formatEntries(filtered, accountCache);
+      return { content: [{ type: "text", text }] };
+    }
+  );
+
+  // whooing_entry_detail — Single transaction lookup
+  server.registerTool(
+    "whooing_entry_detail",
+    {
+      description:
+        "Get one transaction entry by entry_id. Use this before updating or deleting when you already know the ID.",
+      inputSchema: {
+        entry_id: z.number().int().describe("Entry ID to fetch."),
+        section_id: z
+          .string()
+          .optional()
+          .describe("Section ID. Defaults to WHOOING_SECTION_ID env var."),
+      },
+      annotations: { readOnlyHint: true },
+    },
+    async (args) => {
+      const sectionId = args.section_id ?? client.defaultSectionId;
+
+      await client.loadAccounts(sectionId);
+      const entry = (await client.apiGet(`entries/${args.entry_id}.json`, {
+        section_id: sectionId,
+      })) as Parameters<typeof formatEntryDetail>[0];
+
+      if (!entry || !entry.entry_id) {
+        return {
+          content: [{ type: "text", text: `Error: Entry ${args.entry_id} not found.` }],
+          isError: true,
+        };
+      }
+
+      const text = formatEntryDetail(entry, client.getAccountCache());
+      return { content: [{ type: "text", text }] };
+    }
+  );
+
+  // whooing_duplicate_candidates — Find likely duplicate transactions
+  server.registerTool(
+    "whooing_duplicate_candidates",
+    {
+      description:
+        "Find likely duplicate transactions in a date range by grouping same date, amount, accounts, and item.",
+      inputSchema: {
+        ...dateRangeSchema,
+        limit: z
+          .number()
+          .int()
+          .min(1)
+          .max(500)
+          .optional()
+          .describe("Max number of entries to scan. Defaults to 500."),
+        include_memo: z
+          .boolean()
+          .optional()
+          .describe("Include memo in duplicate grouping. Defaults to false."),
+        min_group_size: z
+          .number()
+          .int()
+          .min(2)
+          .max(10)
+          .optional()
+          .describe("Minimum matching entries per duplicate group. Defaults to 2."),
+      },
+      annotations: { readOnlyHint: true },
+    },
+    async (args) => {
+      const defaults = getDateDefaults();
+      const startDate = normalizeDate(args.start_date ?? defaults.startDate);
+      const endDate = normalizeDate(args.end_date ?? defaults.endDate);
+      const sectionId = args.section_id ?? client.defaultSectionId;
+      const limit = args.limit ?? 500;
+
+      await client.loadAccounts(sectionId);
+      const results = await client.apiGet("entries.json", {
+        section_id: sectionId,
+        start_date: startDate,
+        end_date: endDate,
+        limit: String(limit),
+      });
+
+      const text = formatDuplicateCandidates(
+        results as Parameters<typeof formatDuplicateCandidates>[0],
+        client.getAccountCache(),
+        {
+          include_memo: args.include_memo,
+          min_group_size: args.min_group_size,
+        }
       );
       return { content: [{ type: "text", text }] };
     }
@@ -277,6 +450,78 @@ export function createWhooingMcpServer(client: WhooingClient): McpServer {
       const text = formatAccounts(
         raw as Parameters<typeof formatAccounts>[0]
       );
+      return { content: [{ type: "text", text }] };
+    }
+  );
+
+  // whooing_account_activity — Account-focused transaction summary
+  server.registerTool(
+    "whooing_account_activity",
+    {
+      description:
+        "Summarize activity for one account in a date range, including totals, frequent items, and recent matching entries.",
+      inputSchema: {
+        ...dateRangeSchema,
+        account_id: z
+          .string()
+          .optional()
+          .describe("Account ID to summarize. Use either account_id or account_name."),
+        account_name: z
+          .string()
+          .optional()
+          .describe("Case-insensitive account name match. Used when account_id is omitted."),
+        limit: z
+          .number()
+          .int()
+          .min(1)
+          .max(500)
+          .optional()
+          .describe("Max number of entries to scan. Defaults to 100."),
+        recent_limit: z
+          .number()
+          .int()
+          .min(1)
+          .max(100)
+          .optional()
+          .describe("Max number of recent entries to show. Defaults to 20."),
+      },
+      annotations: { readOnlyHint: true },
+    },
+    async (args) => {
+      const defaults = getDateDefaults();
+      const startDate = normalizeDate(args.start_date ?? defaults.startDate);
+      const endDate = normalizeDate(args.end_date ?? defaults.endDate);
+      const sectionId = args.section_id ?? client.defaultSectionId;
+      const limit = args.limit ?? 100;
+      const recentLimit = args.recent_limit ?? 20;
+
+      await client.loadAccounts(sectionId);
+      const accountCache = client.getAccountCache();
+      const accountIds = resolveAccountIdsFromName(
+        accountCache,
+        args.account_id ? [args.account_id] : undefined,
+        args.account_name
+      );
+      const accountId = accountIds?.[0];
+
+      if (!accountId) {
+        return {
+          content: [{ type: "text", text: "Error: account_id or matching account_name is required." }],
+          isError: true,
+        };
+      }
+
+      const results = await client.apiGet("entries.json", {
+        section_id: sectionId,
+        start_date: startDate,
+        end_date: endDate,
+        limit: String(limit),
+      });
+      const filtered = filterEntries(results as Parameters<typeof formatEntries>[0], {
+        account_ids: [accountId],
+      });
+
+      const text = formatAccountActivity(filtered, accountId, accountCache, recentLimit);
       return { content: [{ type: "text", text }] };
     }
   );
@@ -388,6 +633,104 @@ export function createWhooingMcpServer(client: WhooingClient): McpServer {
         (args.memo ? `\n  Memo: ${args.memo}` : "");
 
       return { content: [{ type: "text", text }] };
+    }
+  );
+
+  // whooing_bulk_add_entries — Create several entries at once
+  server.registerTool(
+    "whooing_bulk_add_entries",
+    {
+      description:
+        "Create multiple transaction entries in Whooing. Use whooing_accounts first to look up account IDs.",
+      inputSchema: {
+        entries: z
+          .array(
+            z.object({
+              entry_date: z
+                .string()
+                .regex(/^\d{4}-?\d{2}-?\d{2}$/)
+                .describe("Transaction date in YYYYMMDD format."),
+              l_account_id: z.string().describe("Left account ID."),
+              r_account_id: z.string().describe("Right account ID."),
+              item: z.string().describe("Item description."),
+              money: z.number().describe("Amount in KRW."),
+              memo: z.string().optional().describe("Optional memo."),
+            })
+          )
+          .min(1)
+          .max(50)
+          .describe("Entries to create, in order. Maximum 50."),
+        section_id: z
+          .string()
+          .optional()
+          .describe("Section ID. Defaults to WHOOING_SECTION_ID env var."),
+      },
+      annotations: { readOnlyHint: false },
+    },
+    async (args) => {
+      const sectionId = args.section_id ?? client.defaultSectionId;
+      await client.loadAccounts(sectionId);
+
+      const created: string[] = [];
+      const errors: string[] = [];
+
+      for (const [index, entry] of args.entries.entries()) {
+        const rowNumber = index + 1;
+        const entryDate = normalizeDate(entry.entry_date);
+        const lInfo = client.getAccountInfo(entry.l_account_id);
+        const rInfo = client.getAccountInfo(entry.r_account_id);
+
+        if (!lInfo) {
+          errors.push(`${rowNumber}: unknown left account ID "${entry.l_account_id}"`);
+          continue;
+        }
+        if (!rInfo) {
+          errors.push(`${rowNumber}: unknown right account ID "${entry.r_account_id}"`);
+          continue;
+        }
+
+        const body: Record<string, string> = {
+          section_id: sectionId,
+          entry_date: entryDate,
+          l_account: lInfo.type,
+          l_account_id: entry.l_account_id,
+          r_account: rInfo.type,
+          r_account_id: entry.r_account_id,
+          item: entry.item,
+          money: String(entry.money),
+        };
+        if (entry.memo) {
+          body.memo = entry.memo;
+        }
+
+        try {
+          await client.apiPost("entries.json", body);
+          created.push(
+            `${rowNumber}: ${entryDate} ${entry.item} ${entry.money.toLocaleString()}원 ` +
+              `[${lInfo.name} ← ${rInfo.name}]`
+          );
+        } catch (error) {
+          errors.push(`${rowNumber}: ${error instanceof Error ? error.message : String(error)}`);
+        }
+      }
+
+      const lines: string[] = [];
+      lines.push(`Bulk add complete: ${created.length} created, ${errors.length} failed.`);
+      if (created.length > 0) {
+        lines.push("");
+        lines.push("## Created");
+        lines.push(...created.map((item) => `- ${item}`));
+      }
+      if (errors.length > 0) {
+        lines.push("");
+        lines.push("## Failed");
+        lines.push(...errors.map((item) => `- ${item}`));
+      }
+
+      return {
+        content: [{ type: "text", text: lines.join("\n") }],
+        isError: errors.length > 0,
+      };
     }
   );
 
@@ -572,6 +915,51 @@ export function createWhooingMcpServer(client: WhooingClient): McpServer {
 
       const text = formatCalendar(
         results as Parameters<typeof formatCalendar>[0]
+      );
+      return { content: [{ type: "text", text }] };
+    }
+  );
+
+  // whooing_monthly_summary — Multi-month income/expense summary
+  server.registerTool(
+    "whooing_monthly_summary",
+    {
+      description:
+        "Get month-by-month income, expense, net amount, and transaction count for a month range.",
+      inputSchema: {
+        start_month: z
+          .string()
+          .regex(/^\d{6}$/)
+          .optional()
+          .describe("Start month in YYYYMM format. Defaults to current month."),
+        end_month: z
+          .string()
+          .regex(/^\d{6}$/)
+          .optional()
+          .describe("End month in YYYYMM format. Defaults to current month."),
+        section_id: z
+          .string()
+          .optional()
+          .describe("Section ID. Defaults to WHOOING_SECTION_ID env var."),
+      },
+      annotations: { readOnlyHint: true },
+    },
+    async (args) => {
+      const sectionId = args.section_id ?? client.defaultSectionId;
+      const now = new Date();
+      const currentMonth =
+        `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, "0")}`;
+      const startMonth = args.start_month ?? currentMonth;
+      const endMonth = args.end_month ?? currentMonth;
+
+      const results = await client.apiGet("calendar.json", {
+        section_id: sectionId,
+        start_date: startMonth,
+        end_date: endMonth,
+      });
+
+      const text = formatMonthlySummary(
+        results as Parameters<typeof formatMonthlySummary>[0]
       );
       return { content: [{ type: "text", text }] };
     }
