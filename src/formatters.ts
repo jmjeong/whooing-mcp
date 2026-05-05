@@ -78,6 +78,7 @@ export interface EntryItem {
   r_account_id: string;
   item: string;
   money: number;
+  total?: number;
   memo: string;
 }
 
@@ -95,6 +96,12 @@ export interface EntryFilterOptions {
   memo_contains?: string;
   query?: string;
   keywords?: string[];
+}
+
+export interface AccountAggregateResults {
+  aggregate?: Record<string, number>;
+  rows_type?: string;
+  rows?: unknown;
 }
 
 function includesCaseInsensitive(value: string | undefined, needle: string): boolean {
@@ -424,6 +431,82 @@ export function formatAccountActivity(
       `- **${formatDate(String(row.entry_date))}** ${row.item || "(항목 없음)"} ` +
         `${formatAmount(Number(row.money))} [${lName} ← ${rName}]${memo} (id:${row.entry_id})`
     );
+  }
+
+  return lines.join("\n");
+}
+
+function formatAggregateValue(key: string, value: number): string {
+  const labels: Record<string, string> = {
+    in: "유입",
+    out: "유출",
+    money: "금액",
+    total: "합계",
+  };
+  return `${labels[key] ?? key}: ${formatAmount(value)}`;
+}
+
+function formatAggregateRows(rows: unknown, accounts: Map<string, AccountInfo>): string[] {
+  const normalizedRows = Array.isArray(rows)
+    ? rows
+    : rows && typeof rows === "object"
+      ? Object.entries(rows).map(([key, value]) =>
+          value && typeof value === "object" ? { key, ...value } : { key, money: value }
+        )
+      : [];
+
+  return normalizedRows.slice(0, 10).map((item) => {
+    if (!item || typeof item !== "object") {
+      return `- ${String(item)}`;
+    }
+
+    const row = item as Record<string, unknown>;
+    const rawLabel =
+      row.date ??
+      row.item ??
+      row.client ??
+      row.account_id ??
+      row.key ??
+      "(이름 없음)";
+    const label =
+      typeof rawLabel === "string" && accounts.has(rawLabel)
+        ? `${accounts.get(rawLabel)?.name ?? rawLabel} (${rawLabel})`
+        : String(rawLabel);
+
+    const amounts = Object.entries(row)
+      .filter(([, value]) => typeof value === "number")
+      .map(([key, value]) => formatAggregateValue(key, value as number));
+
+    const formattedLabel = /^\d{8}(?:\.\d+)?$/.test(label) ? formatDate(label) : label;
+    return `- ${formattedLabel}${amounts.length > 0 ? `: ${amounts.join(", ")}` : ""}`;
+  });
+}
+
+export function formatAccountAggregateSummary(
+  title: string,
+  results: AccountAggregateResults,
+  accounts: Map<string, AccountInfo>
+): string {
+  const lines: string[] = [];
+  lines.push(`### ${title}`);
+
+  const aggregate = results.aggregate ?? {};
+  const aggregateText = Object.entries(aggregate)
+    .filter(([, value]) => typeof value === "number")
+    .map(([key, value]) => formatAggregateValue(key, value));
+  if (aggregateText.length > 0) {
+    lines.push(`- 합계: ${aggregateText.join(", ")}`);
+  }
+  if (results.rows_type) {
+    lines.push(`- 단위: ${results.rows_type}`);
+  }
+
+  const rowLines = formatAggregateRows(results.rows, accounts);
+  if (rowLines.length > 0) {
+    lines.push(...rowLines);
+  }
+  if (aggregateText.length === 0 && rowLines.length === 0) {
+    lines.push("- 데이터가 없습니다.");
   }
 
   return lines.join("\n");

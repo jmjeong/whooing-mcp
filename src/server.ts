@@ -11,6 +11,7 @@ import {
   formatReportMonthlySummary,
   formatDuplicateCandidates,
   formatAccountActivity,
+  formatAccountAggregateSummary,
   formatBalance,
   formatAccounts,
   formatSections,
@@ -34,6 +35,29 @@ function getDateDefaults(): { startDate: string; endDate: string } {
     startDate: `${y}${m}01`,
     endDate: `${y}${m}${d}`,
   };
+}
+
+function assertEntriesDateRange(startDate: string, endDate: string): void {
+  const parseDate = (value: string): Date => {
+    const year = Number(value.slice(0, 4));
+    const month = Number(value.slice(4, 6));
+    const day = Number(value.slice(6, 8));
+    return new Date(Date.UTC(year, month - 1, day));
+  };
+  const start = parseDate(startDate);
+  const end = parseDate(endDate);
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
+    throw new Error("Invalid date range.");
+  }
+  if (end < start) {
+    throw new Error("end_date must be on or after start_date.");
+  }
+
+  const oneYearAfterStart = new Date(start);
+  oneYearAfterStart.setUTCFullYear(oneYearAfterStart.getUTCFullYear() + 1);
+  if (end > oneYearAfterStart) {
+    throw new Error("entries.json date range cannot exceed one year.");
+  }
 }
 
 const dateRangeSchema = {
@@ -93,6 +117,14 @@ const entryFilterSchema = {
     .string()
     .optional()
     .describe("Case-insensitive substring match against the memo field."),
+  item: z
+    .string()
+    .optional()
+    .describe("Raw Whooing item search. Supports exact match, * wildcard, and detail parentheses."),
+  memo: z
+    .string()
+    .optional()
+    .describe("Raw Whooing memo search. Supports space-separated AND terms and ! exclusions."),
   query: z
     .string()
     .optional()
@@ -122,6 +154,14 @@ const entryFilterSchema = {
     .max(100)
     .optional()
     .describe("Maximum Whooing API calls this tool may make. Defaults to 20."),
+  sort_column: z
+    .enum(["entry_date", "item", "money", "total", "l_account_id", "r_account_id"])
+    .optional()
+    .describe("Whooing entries sort column. Defaults to entry_date."),
+  sort_order: z
+    .enum(["asc", "desc"])
+    .optional()
+    .describe("Whooing entries sort order. Defaults to desc."),
 };
 
 function resolveAccountIdsFromName(
@@ -159,10 +199,14 @@ interface EntryQueryArgs {
   r_account_id?: string;
   min_money?: number;
   max_money?: number;
+  item?: string;
+  memo?: string;
   item_contains?: string;
   memo_contains?: string;
   query?: string;
   keywords?: string[];
+  sort_column?: "entry_date" | "item" | "money" | "total" | "l_account_id" | "r_account_id";
+  sort_order?: "asc" | "desc";
 }
 
 interface EntryQueryResult {
@@ -190,54 +234,22 @@ function noteApiCall(budget: ApiBudget): void {
   }
 }
 
-function formatUnknownRows(value: unknown, limit = 10): string[] {
-  if (Array.isArray(value)) {
-    return value.slice(0, limit).map((item) => `- ${JSON.stringify(item)}`);
-  }
-  if (value && typeof value === "object") {
-    return Object.entries(value)
-      .slice(0, limit)
-      .map(([key, item]) => `- ${key}: ${JSON.stringify(item)}`);
-  }
-  return [`- ${JSON.stringify(value)}`];
-}
-
-function formatDedicatedAccountSummary(
-  title: string,
-  results: unknown
-): string {
-  const lines: string[] = [];
-  lines.push(`### ${title}`);
-
-  if (!results || typeof results !== "object") {
-    lines.push(...formatUnknownRows(results));
-    return lines.join("\n");
-  }
-
-  const record = results as Record<string, unknown>;
-  if (record.aggregate && typeof record.aggregate === "object") {
-    lines.push(`- aggregate: ${JSON.stringify(record.aggregate)}`);
-  }
-  if (record.rows !== undefined) {
-    lines.push(...formatUnknownRows(record.rows));
-  } else {
-    lines.push(...formatUnknownRows(record));
-  }
-
-  return lines.join("\n");
-}
-
 async function tryAccountSummaryApi(
   client: WhooingClient,
   endpoint: string,
   params: Record<string, string>,
   title: string,
-  budget: ApiBudget
+  budget: ApiBudget,
+  accountCache: Map<string, { name: string; type: string }>
 ): Promise<string> {
   try {
     noteApiCall(budget);
     const results = await client.apiGet(endpoint, params);
-    return formatDedicatedAccountSummary(title, results);
+    return formatAccountAggregateSummary(
+      title,
+      results as Parameters<typeof formatAccountAggregateSummary>[1],
+      accountCache
+    );
   } catch (error) {
     return `### ${title}\n- unavailable: ${error instanceof Error ? error.message : String(error)}`;
   }
@@ -257,8 +269,8 @@ function buildEntriesApiParams(
     start_date: startDate,
     end_date: endDate,
     limit: String(limit),
-    sort_column: "entry_date",
-    sort_order: "desc",
+    sort_column: args.sort_column ?? "entry_date",
+    sort_order: args.sort_order ?? "desc",
   };
   if (max) {
     params.max = max;
@@ -314,11 +326,17 @@ function buildEntriesApiParams(
     params.money_to = String(args.max_money);
     clientFilters.max_money = undefined;
   }
-  if (args.item_contains && !args.query && !args.keywords?.length) {
+  if (args.item) {
+    params.item = args.item;
+    clientFilters.item_contains = undefined;
+  } else if (args.item_contains && !args.query && !args.keywords?.length) {
     params.item = wildcardContains(args.item_contains);
     clientFilters.item_contains = undefined;
   }
-  if (args.memo_contains && !args.query && !args.keywords?.length) {
+  if (args.memo) {
+    params.memo = args.memo;
+    clientFilters.memo_contains = undefined;
+  } else if (args.memo_contains && !args.query && !args.keywords?.length) {
     params.memo = wildcardContains(args.memo_contains);
     clientFilters.memo_contains = undefined;
   }
@@ -400,7 +418,26 @@ async function fetchEntriesPaginated(
   };
 }
 
-function mergeEntryQueryResults(results: EntryQueryResult[]): EntryQueryResult {
+function compareEntryRows(
+  a: NonNullable<EntryResults["rows"]>[number],
+  b: NonNullable<EntryResults["rows"]>[number],
+  args: EntryQueryArgs
+): number {
+  const column = args.sort_column ?? "entry_date";
+  const order = args.sort_order ?? "desc";
+  const left = a[column as keyof typeof a];
+  const right = b[column as keyof typeof b];
+  const comparison =
+    typeof left === "number" && typeof right === "number"
+      ? left - right
+      : String(left ?? "").localeCompare(String(right ?? ""));
+  return order === "asc" ? comparison : -comparison;
+}
+
+function mergeEntryQueryResults(
+  results: EntryQueryResult[],
+  args: EntryQueryArgs = {}
+): EntryQueryResult {
   const rowsById = new Map<number, NonNullable<EntryResults["rows"]>[number]>();
   for (const result of results) {
     for (const row of result.results.rows ?? []) {
@@ -408,9 +445,7 @@ function mergeEntryQueryResults(results: EntryQueryResult[]): EntryQueryResult {
     }
   }
 
-  const rows = [...rowsById.values()].sort((a, b) =>
-    String(b.entry_date).localeCompare(String(a.entry_date))
-  );
+  const rows = [...rowsById.values()].sort((a, b) => compareEntryRows(a, b, args));
 
   return {
     results: { rows },
@@ -418,6 +453,15 @@ function mergeEntryQueryResults(results: EntryQueryResult[]): EntryQueryResult {
     pagesFetched: results.reduce((sum, result) => sum + result.pagesFetched, 0),
     stoppedByMaxPages: results.some((result) => result.stoppedByMaxPages),
   };
+}
+
+function validateEntriesDateRange(startDate: string, endDate: string): string | undefined {
+  try {
+    assertEntriesDateRange(startDate, endDate);
+    return undefined;
+  } catch (error) {
+    return error instanceof Error ? error.message : String(error);
+  }
 }
 
 async function searchEntriesEfficiently(
@@ -472,7 +516,7 @@ async function searchEntriesEfficientlyWithBudget(
         )
       );
     }
-    return mergeEntryQueryResults(perAccountResults);
+    return mergeEntryQueryResults(perAccountResults, args);
   }
 
   if (args.query && !args.item_contains && !args.memo_contains && !args.keywords?.length) {
@@ -496,7 +540,7 @@ async function searchEntriesEfficientlyWithBudget(
       { pageLimit: 100, maxPages: 20 },
       budget
     );
-    return mergeEntryQueryResults([itemResults, memoResults]);
+    return mergeEntryQueryResults([itemResults, memoResults], args);
   }
 
   return fetchEntriesPaginated(
@@ -515,7 +559,7 @@ export function createWhooingMcpServer(client: WhooingClient): McpServer {
   const server = new McpServer(
     {
       name: "whooing-mcp",
-      version: "0.3.8",
+      version: "0.3.9",
     },
     {
       instructions:
@@ -578,6 +622,10 @@ export function createWhooingMcpServer(client: WhooingClient): McpServer {
       const endDate = normalizeDate(args.end_date ?? defaults.endDate);
       const sectionId = args.section_id ?? client.defaultSectionId;
       const limit = args.limit ?? 20;
+      const dateError = validateEntriesDateRange(startDate, endDate);
+      if (dateError) {
+        return { content: [{ type: "text", text: `Error: ${dateError}` }], isError: true };
+      }
 
       await client.loadAccounts(sectionId);
       const accountCache = client.getAccountCache();
@@ -616,6 +664,10 @@ export function createWhooingMcpServer(client: WhooingClient): McpServer {
       const startDate = normalizeDate(args.start_date ?? defaults.startDate);
       const endDate = normalizeDate(args.end_date ?? defaults.endDate);
       const sectionId = args.section_id ?? client.defaultSectionId;
+      const dateError = validateEntriesDateRange(startDate, endDate);
+      if (dateError) {
+        return { content: [{ type: "text", text: `Error: ${dateError}` }], isError: true };
+      }
 
       await client.loadAccounts(sectionId);
       const accountCache = client.getAccountCache();
@@ -708,6 +760,10 @@ export function createWhooingMcpServer(client: WhooingClient): McpServer {
       const startDate = normalizeDate(args.start_date ?? defaults.startDate);
       const endDate = normalizeDate(args.end_date ?? defaults.endDate);
       const sectionId = args.section_id ?? client.defaultSectionId;
+      const dateError = validateEntriesDateRange(startDate, endDate);
+      if (dateError) {
+        return { content: [{ type: "text", text: `Error: ${dateError}` }], isError: true };
+      }
 
       await client.loadAccounts(sectionId);
       const accountCache = client.getAccountCache();
@@ -885,6 +941,10 @@ export function createWhooingMcpServer(client: WhooingClient): McpServer {
       const endDate = normalizeDate(args.end_date ?? defaults.endDate);
       const sectionId = args.section_id ?? client.defaultSectionId;
       const recentLimit = args.recent_limit ?? 20;
+      const dateError = validateEntriesDateRange(startDate, endDate);
+      if (dateError) {
+        return { content: [{ type: "text", text: `Error: ${dateError}` }], isError: true };
+      }
 
       await client.loadAccounts(sectionId);
       const accountCache = client.getAccountCache();
@@ -923,11 +983,17 @@ export function createWhooingMcpServer(client: WhooingClient): McpServer {
           : queryResult.results;
 
       const accountInfo = accountCache.get(accountId);
+      if (!accountInfo) {
+        return {
+          content: [{ type: "text", text: `Error: Unknown account ID "${accountId}". Use whooing_accounts to look up valid IDs.` }],
+          isError: true,
+        };
+      }
       const summaryParams: Record<string, string> = {
         section_id: sectionId,
         start_date: startDate,
         end_date: endDate,
-        account: accountInfo?.type ?? "",
+        account: accountInfo.type,
         account_id: accountId,
       };
       const budget = createApiBudget(args.max_api_calls ?? 12);
@@ -938,21 +1004,24 @@ export function createWhooingMcpServer(client: WhooingClient): McpServer {
           "entries/changes_of_account_id.json",
           summaryParams,
           "일별 변동",
-          budget
+          budget,
+          accountCache
         ),
         await tryAccountSummaryApi(
           client,
           "entries/items_of_account_id.json",
           summaryParams,
           "항목별 집계",
-          budget
+          budget,
+          accountCache
         ),
         await tryAccountSummaryApi(
           client,
           "entries/clients_of_account_id.json",
           summaryParams,
           "거래처별 집계",
-          budget
+          budget,
+          accountCache
         ),
       ];
 
