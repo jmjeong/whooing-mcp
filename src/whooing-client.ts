@@ -27,7 +27,7 @@ export class WhooingClient {
   private getApiKey(): string {
     const nounce = crypto.randomBytes(20).toString("hex");
     const timestamp = Math.floor(Date.now() / 1000);
-    return `app_id=${this.config.appId},token=${this.config.token},signiture=${this.config.signature},nounce=${nounce},timestamp=${timestamp}`;
+    return `app_id=${this.config.appId},token=${this.config.token},signature=${this.config.signature},nounce=${nounce},timestamp=${timestamp}`;
   }
 
   async apiGet(

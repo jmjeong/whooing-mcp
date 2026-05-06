@@ -593,7 +593,7 @@ export function createWhooingMcpServer(client: WhooingClient): McpServer {
   const server = new McpServer(
     {
       name: "whooing-mcp",
-      version: "0.3.10",
+      version: "0.3.11",
     },
     {
       instructions:
@@ -858,18 +858,35 @@ export function createWhooingMcpServer(client: WhooingClient): McpServer {
   server.registerTool(
     "whooing_budget",
     {
-      description: "Get budget status for a date range",
-      inputSchema: dateRangeSchema,
+      description: "Get budget status (expenses) for a date range. Dates use YYYYMM (month) format.",
+      inputSchema: {
+        start_date: z
+          .string()
+          .regex(/^\d{6}$/)
+          .optional()
+          .describe("Start month (YYYYMM). Defaults to current month."),
+        end_date: z
+          .string()
+          .regex(/^\d{6}$/)
+          .optional()
+          .describe("End month (YYYYMM). Defaults to current month."),
+        section_id: z
+          .string()
+          .optional()
+          .describe("Section ID. Defaults to WHOOING_SECTION_ID env var."),
+      },
       annotations: { readOnlyHint: true },
     },
     async (args) => {
-      const defaults = getDateDefaults();
-      const startDate = normalizeDate(args.start_date ?? defaults.startDate);
-      const endDate = normalizeDate(args.end_date ?? defaults.endDate);
+      const now = new Date();
+      const currentMonth =
+        `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, "0")}`;
+      const startDate = args.start_date ?? currentMonth;
+      const endDate = args.end_date ?? currentMonth;
       const sectionId = args.section_id ?? client.defaultSectionId;
 
       await client.loadAccounts(sectionId);
-      const results = await client.apiGet("budget.json", {
+      const results = await client.apiGet("budget/expenses.json", {
         section_id: sectionId,
         start_date: startDate,
         end_date: endDate,
@@ -1356,7 +1373,7 @@ export function createWhooingMcpServer(client: WhooingClient): McpServer {
     }
   );
 
-  // whooing_delete_entry — Actually delete an entry via Whooing DELETE API
+  // whooing_delete_entry — Delete an entry via Whooing DELETE API
   server.registerTool(
     "whooing_delete_entry",
     {
@@ -1375,44 +1392,10 @@ export function createWhooingMcpServer(client: WhooingClient): McpServer {
     async (args) => {
       const sectionId = args.section_id ?? client.defaultSectionId;
 
-      await client.loadAccounts(sectionId);
-
-      // Fetch the specific entry to find the target entry's account info
-      const entry = (await client.apiGet(`entries/${args.entry_id}.json`, {
-        section_id: sectionId,
-      })) as {
-        entry_id: number;
-        l_account: string;
-        l_account_id: string;
-        r_account: string;
-        r_account_id: string;
-        entry_date: string;
-        item: string;
-      };
-
-      if (!entry || !entry.entry_id) {
-        return {
-          content: [{ type: "text", text: `Error: Entry ${args.entry_id} not found.` }],
-          isError: true,
-        };
-      }
-
-      const body: Record<string, string> = {
-        section_id: sectionId,
-        entry_date: String(entry.entry_date).split(".")[0],
-        l_account: entry.l_account,
-        l_account_id: entry.l_account_id,
-        r_account: entry.r_account,
-        r_account_id: entry.r_account_id,
-        item: `[삭제] ${entry.item}`,
-        money: "0",
-        memo: "",
-      };
-
-      await client.apiPut(`entries/${args.entry_id}.json`, body);
+      await client.apiDelete(`entries/${args.entry_id}/${sectionId}.json`);
 
       return {
-        content: [{ type: "text", text: `Entry ${args.entry_id} deleted (soft-delete: amount set to 0).` }],
+        content: [{ type: "text", text: `Entry ${args.entry_id} deleted.` }],
       };
     }
   );
